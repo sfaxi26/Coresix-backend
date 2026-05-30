@@ -26,9 +26,33 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// ── ERROR HANDLERS ───────────────────────────────────────
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled rejection:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught exception:", err.message);
+});
+
 // ── HEALTH CHECK ──────────────────────────────────────────
-app.get("/", (req, res) => {
-  res.json({ status: "CoreSix brain is running", version: "1.0.0" });
+app.get("/", async (req, res) => {
+  let dbStatus = "unknown";
+  try {
+    await pool.query("SELECT 1");
+    dbStatus = "connected";
+  } catch (e) {
+    dbStatus = "error: " + e.message;
+  }
+  res.json({
+    status: "CoreSix brain is running",
+    version: "1.0.0",
+    db: dbStatus,
+    env: {
+      has_db_url: !!process.env.DATABASE_URL,
+      has_groq: !!process.env.GROQ_API_KEY,
+      node_env: process.env.NODE_ENV,
+    }
+  });
 });
 
 // ── USER ──────────────────────────────────────────────────
@@ -291,11 +315,15 @@ app.get("/api/dashboard/:deviceId", async (req, res) => {
 });
 
 // ── START ─────────────────────────────────────────────────
-setupDB().then(() => {
-  app.listen(PORT, () => {
-    console.log(`🧠 CoreSix brain running on port ${PORT}`);
-  });
-}).catch(err => {
-  console.error("DB setup failed:", err);
-  process.exit(1);
+const server = app.listen(PORT, () => {
+  console.log(`🧠 CoreSix brain running on port ${PORT}`);
+});
+
+server.on("listening", () => {
+  // Setup DB after server starts — never crash on DB failure
+  setTimeout(() => {
+    setupDB()
+      .then(() => console.log("✅ Database connected"))
+      .catch(err => console.error("⚠️ DB warning:", err.message));
+  }, 1000);
 });

@@ -3,7 +3,9 @@ const { Pool } = require("pg");
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }, // Required for Supabase
+  ssl: { rejectUnauthorized: false },
+  // Force IPv4 for Render compatibility
+  family: 4,
 });
 
 // ── SCHEMA SETUP ─────────────────────────────────────────
