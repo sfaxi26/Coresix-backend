@@ -279,6 +279,54 @@ app.get("/api/patterns/:deviceId", async (req, res) => {
   }
 });
 
+// ── FOOD PHOTO ANALYSIS ──────────────────────────────────
+app.post("/api/food-photo", async (req, res) => {
+  const { image, mimeType } = req.body;
+  if (!image) return res.status(400).json({ error: "No image provided" });
+
+  try {
+    const geminiRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              {
+                inline_data: { mime_type: mimeType || "image/jpeg", data: image }
+              },
+              {
+                text: `Analyse this food image and respond in JSON only with no markdown:
+{
+  "foods": ["food item 1", "food item 2"],
+  "calories": number (total estimate),
+  "protein": number (grams),
+  "carbs": number (grams),
+  "fat": number (grams),
+  "insight": "one coaching sentence about this meal and how it fits a healthy diet"
+}
+Be realistic with estimates. If you cannot identify food, return calories: 0.`
+              }
+            ]
+          }]
+        })
+      }
+    );
+
+    const geminiData = await geminiRes.json();
+    const text = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+
+    // Clean and parse JSON
+    const clean = text.replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(clean);
+    res.json(parsed);
+  } catch (err) {
+    console.error("Food photo error:", err);
+    res.status(500).json({ error: "Could not analyse photo. Try again." });
+  }
+});
+
 // ── DASHBOARD DATA ────────────────────────────────────────
 
 // Get full dashboard in one call
