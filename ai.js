@@ -97,6 +97,17 @@ Goal: ${user.goal}
 Write a gentle, specific nudge that addresses this pattern without naming it directly.
 Sound like a wise friend, not a notification. Max 2 sentences.`,
 
+    move_insight: `
+Generate a personalised movement coaching insight based on this data:
+${context.pillar || "{}"}
+
+Rules:
+- Reference the specific Move habit they chose
+- Reference their actual step count and workout data
+- If habit goal is met — celebrate and suggest progression
+- If not met — encourage gently with one specific tip
+- Max 2 sentences. Sound like a real fitness coach who knows their day.`,
+
     fuel_insight: `
 Generate a personalised nutrition coaching insight based on this data:
 ${context.pillar || "{}"}
