@@ -50,6 +50,7 @@ app.get("/", async (req, res) => {
     env: {
       has_db_url: !!process.env.DATABASE_URL,
       has_groq: !!process.env.GROQ_API_KEY,
+      has_gemini: !!process.env.GEMINI_API_KEY,
       node_env: process.env.NODE_ENV,
     }
   });
