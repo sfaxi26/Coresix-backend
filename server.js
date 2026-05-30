@@ -284,47 +284,61 @@ app.get("/api/patterns/:deviceId", async (req, res) => {
 app.post("/api/food-photo", async (req, res) => {
   const { image, mimeType } = req.body;
   if (!image) return res.status(400).json({ error: "No image provided" });
+  if (!process.env.GEMINI_API_KEY) return res.status(500).json({ error: "Gemini API key not configured" });
+
+  console.log("Food photo request received, image size:", image.length);
 
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 25000);
+
     const geminiRes = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           contents: [{
             parts: [
-              {
-                inline_data: { mime_type: mimeType || "image/jpeg", data: image }
-              },
-              {
-                text: `Analyse this food image and respond in JSON only with no markdown:
-{
-  "foods": ["food item 1", "food item 2"],
-  "calories": number (total estimate),
-  "protein": number (grams),
-  "carbs": number (grams),
-  "fat": number (grams),
-  "insight": "one coaching sentence about this meal and how it fits a healthy diet"
-}
-Be realistic with estimates. If you cannot identify food, return calories: 0.`
-              }
+              { inline_data: { mime_type: mimeType || "image/jpeg", data: image } },
+              { text: `Analyse this food image. Respond in JSON only, no markdown, no explanation:
+{"foods":["item1","item2"],"calories":300,"protein":25,"carbs":30,"fat":10,"insight":"One sentence nutrition coaching tip."}
+Estimate realistic values. If not food, return all zeros.` }
             ]
-          }]
+          }],
+          generationConfig: { temperature: 0.1, maxOutputTokens: 256 }
         })
       }
     );
+    clearTimeout(timeout);
 
+    console.log("Gemini response status:", geminiRes.status);
     const geminiData = await geminiRes.json();
-    const text = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+    console.log("Gemini response:", JSON.stringify(geminiData).slice(0, 200));
 
-    // Clean and parse JSON
+    const text = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
     const clean = text.replace(/```json|```/g, "").trim();
-    const parsed = JSON.parse(clean);
-    res.json(parsed);
+
+    try {
+      const parsed = JSON.parse(clean);
+      res.json(parsed);
+    } catch {
+      // Try to extract JSON from text
+      const match = clean.match(/\{[\s\S]*\}/);
+      if (match) {
+        res.json(JSON.parse(match[0]));
+      } else {
+        res.json({ foods:["Unknown food"], calories:0, protein:0, carbs:0, fat:0, insight:"Could not identify food clearly. Try a clearer photo." });
+      }
+    }
   } catch (err) {
-    console.error("Food photo error:", err);
-    res.status(500).json({ error: "Could not analyse photo. Try again." });
+    console.error("Food photo error:", err.message);
+    if (err.name === "AbortError") {
+      res.status(504).json({ error: "Analysis took too long. Try a smaller photo." });
+    } else {
+      res.status(500).json({ error: "Could not analyse photo: " + err.message });
+    }
   }
 });
 
