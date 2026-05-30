@@ -96,6 +96,18 @@ Recommended action: ${patterns[0]?.action || "keep going"}.
 Goal: ${user.goal}
 Write a gentle, specific nudge that addresses this pattern without naming it directly.
 Sound like a wise friend, not a notification. Max 2 sentences.`,
+
+    fuel_insight: `
+Generate a personalised nutrition coaching insight based on this data:
+${context.pillar || "{}"}
+
+Rules:
+- Reference the specific habit they chose
+- Reference their actual meal data (meals logged, protein %, calories %)
+- If habit goal is met — celebrate specifically and suggest what to keep doing
+- If habit goal not met — encourage gently, one specific suggestion
+- Reference fiber if it is low (under 50%)
+- Max 2 sentences. Sound like a real nutrition coach who knows their day.`,
   };
 
   return prompts[purpose] || prompts.morning;
