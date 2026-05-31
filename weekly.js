@@ -60,10 +60,10 @@ const collectWeeklyData = async (userId, weekData) => {
     ? Math.round(activeScores.reduce((a,[_,s])=>a+s,0) / activeScores.length)
     : 0;
 
-  // Mark which pillars are active
-  const activePillars = activeScores.map(([p])=>p);
+  // Mark which pillars have scores this week
+  const scoredPillars = activeScores.map(([p])=>p);
 
-  return { scores, overall, streak, activePillars };
+  return { scores, overall, streak, activePillars: scoredPillars };
 };
 
 // ── PILLAR SCORERS ────────────────────────────────────────
