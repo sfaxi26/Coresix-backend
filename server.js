@@ -343,6 +343,101 @@ Estimate realistic values. If not food, return all zeros.` }
   }
 });
 
+// ── MONTHLY PROGRESS LETTER ──────────────────────────────
+app.post("/api/monthly-letter", async (req, res) => {
+  const { deviceId, monthData } = req.body;
+  if (!deviceId) return res.status(400).json({ error: "deviceId required" });
+
+  try {
+    const { rows: userRows } = await pool.query("SELECT name, streak FROM users WHERE id=$1", [deviceId]);
+    const user = userRows[0] || {};
+
+    // Get monthly stats
+    const { rows: checkinRows } = await pool.query(`
+      SELECT pillar, COUNT(*) as count,
+             COUNT(DISTINCT date) as days_active
+      FROM checkins
+      WHERE user_id = $1
+      AND created_at > NOW() - INTERVAL '30 days'
+      GROUP BY pillar
+    `, [deviceId]);
+
+    const { rows: impactRows } = await pool.query(`
+      SELECT pillar, AVG(score) as avg_score
+      FROM weekly_impact
+      WHERE user_id = $1
+      AND created_at > NOW() - INTERVAL '30 days'
+      GROUP BY pillar
+    `, [deviceId]);
+
+    const { rows: totalDaysRow } = await pool.query(`
+      SELECT COUNT(DISTINCT date) as days
+      FROM checkins
+      WHERE user_id = $1
+      AND created_at > NOW() - INTERVAL '30 days'
+    `, [deviceId]);
+
+    const totalDays = parseInt(totalDaysRow[0]?.days || 0);
+    const pillarStats = {};
+    checkinRows.forEach(r => {
+      pillarStats[r.pillar] = { count: parseInt(r.count), days: parseInt(r.days_active) };
+    });
+
+    const impactScores = {};
+    impactRows.forEach(r => { impactScores[r.pillar] = Math.round(parseFloat(r.avg_score) * 25); });
+
+    const bestPillar = Object.entries(pillarStats).sort((a,b)=>b[1].days-a[1].days)[0];
+    const mostImproved = Object.entries(impactScores).sort((a,b)=>b[1]-a[1])[0];
+
+    const { callGroq } = require("./ai");
+
+    const prompt = `Write a warm, personal monthly progress letter for ${user.name||"this person"} from CoreSix — their wellness coaching app.
+
+Their month in numbers:
+- Days they showed up: ${totalDays} out of 30
+- Current streak: ${user.streak || 0} days
+- Most active pillar: ${bestPillar?.[0] || "unknown"} (${bestPillar?.[1]?.days || 0} days)
+- Best impact score: ${mostImproved?.[0] || "unknown"} (${mostImproved?.[1] || 0}/100)
+- Additional data: ${JSON.stringify(monthData || {})}
+
+Write the letter with this structure:
+
+Dear ${user.name||"there"},
+
+[Opening — 2 sentences acknowledging the month honestly. Not fake positivity. Real.]
+
+[Progress section — 2-3 sentences about what the data shows. Reference specific numbers. Be honest if it was a hard month.]
+
+[The shift you noticed — 1-2 sentences about one meaningful change in their data, however small.]
+
+[What this means — 1-2 sentences connecting their habits to who they are becoming. Identity-based.]
+
+[Next month — 2 sentences with one specific focus for next month. Make it feel achievable.]
+
+[Closing — one powerful sentence.]
+
+With you,
+CoreSix
+
+Tone: Like a letter from the best coach they never had. Warm but honest. Reference real numbers. Never generic.
+Max 300 words.`;
+
+    const letter = await callGroq(prompt, undefined, 500);
+
+    // Save to insights
+    await pool.query(
+      "INSERT INTO insights (user_id, insight_type, content, context) VALUES ($1, $2, $3, $4)",
+      [deviceId, "monthly_letter", letter, JSON.stringify({ totalDays, pillarStats, impactScores })]
+    );
+
+    const month = new Date().toLocaleDateString("en", { month:"long", year:"numeric" });
+    res.json({ letter, month, stats: { totalDays, pillarStats, impactScores, streak: user.streak } });
+  } catch (err) {
+    console.error("Monthly letter error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── PREDICTIVE WARNINGS ──────────────────────────────────
 app.get("/api/warnings/:deviceId", async (req, res) => {
   const { deviceId } = req.params;
