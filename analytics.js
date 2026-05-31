@@ -521,8 +521,17 @@ const getPillarRippleEffect = async (userId) => {
 const generatePredictiveWarnings = async (userId) => {
   const warnings = [];
   const today = new Date();
-  const dayOfWeek = today.getDay(); // 0=Sun, 1=Mon...5=Fri, 6=Sat
+  const dayOfWeek = today.getDay();
   const dayName = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][dayOfWeek];
+
+  // Need at least 7 days of data before generating meaningful warnings
+  const { rows: dataCheck } = await pool.query(`
+    SELECT COUNT(DISTINCT date) as days
+    FROM checkins WHERE user_id = $1
+    AND created_at > NOW() - INTERVAL '30 days'
+  `, [userId]);
+  const daysOfData = parseInt(dataCheck[0]?.days || 0);
+  if (daysOfData < 7) return []; // Not enough data yet
 
   // ── WARNING 1: STREAK RISK BY DAY OF WEEK ────────────────
   const { rows: streakByDay } = await pool.query(`
