@@ -284,10 +284,244 @@ const determineTone = (patterns, streak) => {
   return "warm_supportive";
 };
 
+// ── CROSS-PILLAR PATTERN DETECTION ───────────────────────
+// Analyses relationships between pillars over time
+const detectCrossPillarPatterns = async (userId) => {
+  const patterns = [];
+
+  // Get last 7 days of checkins per pillar
+  const { rows: checkinRows } = await pool.query(`
+    SELECT pillar, date, COUNT(*) as count
+    FROM checkins
+    WHERE user_id = $1
+    AND created_at > NOW() - INTERVAL '7 days'
+    GROUP BY pillar, date
+    ORDER BY date DESC
+  `, [userId]);
+
+  // Get weekly impact scores
+  const { rows: impactRows } = await pool.query(`
+    SELECT pillar, score, created_at
+    FROM weekly_impact
+    WHERE user_id = $1
+    ORDER BY created_at DESC
+    LIMIT 18
+  `, [userId]);
+
+  // Get insights history to understand patterns over time
+  const { rows: insightRows } = await pool.query(`
+    SELECT insight_type, context, created_at
+    FROM insights
+    WHERE user_id = $1
+    ORDER BY created_at DESC
+    LIMIT 20
+  `, [userId]);
+
+  // Build pillar activity map
+  const pillarActivity = {};
+  checkinRows.forEach(r => {
+    if (!pillarActivity[r.pillar]) pillarActivity[r.pillar] = [];
+    pillarActivity[r.pillar].push(r.date);
+  });
+
+  // Build impact score map
+  const impactByPillar = {};
+  impactRows.forEach(r => {
+    if (!impactByPillar[r.pillar]) impactByPillar[r.pillar] = [];
+    impactByPillar[r.pillar].push({ score: r.score, date: r.created_at });
+  });
+
+  // ── PATTERN 1: REST → FOCUS ───────────────────────────
+  // If rest score is low and focus score is also low
+  const restScore = impactByPillar.rest?.[0]?.score ?? null;
+  const focusScore = impactByPillar.focus?.[0]?.score ?? null;
+  if (restScore !== null && focusScore !== null) {
+    if (restScore <= 1 && focusScore <= 1) {
+      patterns.push({
+        type: "rest_focus_link",
+        severity: "high",
+        pillars: ["rest", "focus"],
+        title: "Sleep is hurting your focus",
+        message: "Your Rest and Focus scores are both low this week. Poor sleep directly impairs the prefrontal cortex — the seat of concentration and deep work.",
+        suggestion: "Prioritise sleep tonight. Even one extra hour can recover 80% of your cognitive capacity.",
+        icon: "😴→🎯",
+        actionable: true,
+      });
+    } else if (restScore >= 3 && focusScore >= 3) {
+      patterns.push({
+        type: "rest_focus_positive",
+        severity: "positive",
+        pillars: ["rest", "focus"],
+        title: "Sleep is powering your focus",
+        message: "Strong Rest and Focus scores this week — your sleep is directly supporting your cognitive performance.",
+        suggestion: "Protect your sleep schedule — it is your secret weapon for deep work.",
+        icon: "😴→🎯",
+        actionable: false,
+      });
+    }
+  }
+
+  // ── PATTERN 2: MOVE → CALM ────────────────────────────
+  const moveScore = impactByPillar.move?.[0]?.score ?? null;
+  const calmScore = impactByPillar.calm?.[0]?.score ?? null;
+  if (moveScore !== null && calmScore !== null) {
+    if (moveScore <= 1 && calmScore <= 1) {
+      patterns.push({
+        type: "move_calm_link",
+        severity: "medium",
+        pillars: ["move", "calm"],
+        title: "Movement could reduce your stress",
+        message: "Low movement and high stress this week. Exercise releases endorphins and reduces cortisol — it is one of the most powerful stress interventions available.",
+        suggestion: "A 10-minute walk tomorrow morning could shift your stress level significantly.",
+        icon: "💪→🧘",
+        actionable: true,
+      });
+    }
+  }
+
+  // ── PATTERN 3: CONNECT → CALM ─────────────────────────
+  const connectScore = impactByPillar.connect?.[0]?.score ?? null;
+  if (connectScore !== null && calmScore !== null) {
+    if (connectScore <= 1 && calmScore <= 1) {
+      patterns.push({
+        type: "isolation_stress",
+        severity: "medium",
+        pillars: ["connect", "calm"],
+        title: "Isolation may be increasing stress",
+        message: "Low connection and elevated stress often go together. Social isolation activates the same brain regions as physical pain.",
+        suggestion: "One genuine conversation today could measurably reduce your cortisol levels.",
+        icon: "🤝→🧘",
+        actionable: true,
+      });
+    }
+  }
+
+  // ── PATTERN 4: FUEL → FOCUS ───────────────────────────
+  const fuelScore = impactByPillar.fuel?.[0]?.score ?? null;
+  if (fuelScore !== null && focusScore !== null) {
+    if (fuelScore <= 1 && focusScore <= 1) {
+      patterns.push({
+        type: "fuel_focus_link",
+        severity: "medium",
+        pillars: ["fuel", "focus"],
+        title: "Nutrition may be limiting your focus",
+        message: "Your Fuel and Focus scores are both low. The brain consumes 20% of your daily energy — poor nutrition directly limits cognitive performance.",
+        suggestion: "Try adding protein to breakfast tomorrow and notice the difference in morning clarity.",
+        icon: "⚡→🎯",
+        actionable: true,
+      });
+    }
+  }
+
+  // ── PATTERN 5: REST → CALM ────────────────────────────
+  if (restScore !== null && calmScore !== null) {
+    if (restScore <= 1 && calmScore <= 1) {
+      patterns.push({
+        type: "rest_calm_link",
+        severity: "high",
+        pillars: ["rest", "calm"],
+        title: "Poor sleep is amplifying stress",
+        message: "Sleep deprivation enlarges the amygdala — your brain's threat detector — making you more reactive and less calm.",
+        suggestion: "A consistent bedtime for 3 nights can begin resetting your stress response.",
+        icon: "😴→🧘",
+        actionable: true,
+      });
+    }
+  }
+
+  // ── PATTERN 6: ALL PILLARS STRONG ────────────────────
+  const allScores = [restScore,focusScore,moveScore,calmScore,connectScore,fuelScore].filter(s=>s!==null);
+  if (allScores.length >= 4 && allScores.every(s=>s>=2)) {
+    patterns.push({
+      type: "all_strong",
+      severity: "positive",
+      pillars: ["fuel","move","rest","calm","connect","focus"],
+      title: "All pillars are strong this week",
+      message: "Every pillar you are tracking is performing well. This is rare and worth acknowledging — your habits are compounding across your whole life.",
+      suggestion: "The goal now is consistency — protect what is working.",
+      icon: "✨",
+      actionable: false,
+    });
+  }
+
+  // ── PATTERN 7: NEGLECTED PILLAR AFFECTING OTHERS ─────
+  const checkedPillars = Object.keys(pillarActivity);
+  const allPillars = ["fuel","move","rest","calm","connect","focus"];
+  const neglected = allPillars.filter(p=>!checkedPillars.includes(p));
+  if (neglected.length > 0) {
+    const rippleMap = {
+      rest: ["focus","calm"],
+      move: ["calm","fuel"],
+      fuel: ["focus","move"],
+      calm: ["connect","focus"],
+      connect: ["calm"],
+      focus: ["move"],
+    };
+    neglected.forEach(p => {
+      const affected = rippleMap[p] || [];
+      if (affected.length > 0) {
+        patterns.push({
+          type: "neglect_ripple",
+          severity: "medium",
+          pillars: [p, ...affected],
+          title: `${p.charAt(0).toUpperCase()+p.slice(1)} neglect may affect other pillars`,
+          message: `You haven't checked in on ${p} this week. Research shows neglecting this pillar often impacts ${affected.join(" and ")}.`,
+          suggestion: `Even one small ${p} habit today can break the ripple effect.`,
+          icon: "🔗",
+          actionable: true,
+        });
+      }
+    });
+  }
+
+  return patterns.slice(0, 5); // Max 5 patterns at a time
+};
+
+// ── PILLAR RIPPLE EFFECT ──────────────────────────────────
+const getPillarRippleEffect = async (userId) => {
+  const { rows: impactRows } = await pool.query(`
+    SELECT pillar, AVG(score) as avg_score
+    FROM weekly_impact
+    WHERE user_id = $1
+    AND created_at > NOW() - INTERVAL '30 days'
+    GROUP BY pillar
+  `, [userId]);
+
+  const scores = {};
+  impactRows.forEach(r => { scores[r.pillar] = parseFloat(r.avg_score); });
+
+  // Find keystone pillar — most correlated with others
+  const RIPPLE_MAP = {
+    rest:    { affects: ["focus","calm","move"], strength: 0.85 },
+    fuel:    { affects: ["move","focus","energy"], strength: 0.75 },
+    move:    { affects: ["calm","rest","focus"], strength: 0.80 },
+    calm:    { affects: ["connect","focus","rest"], strength: 0.70 },
+    connect: { affects: ["calm","focus"], strength: 0.65 },
+    focus:   { affects: ["fuel","move"], strength: 0.60 },
+  };
+
+  const pillarScores = Object.entries(scores);
+  if (!pillarScores.length) return null;
+
+  const keystone = pillarScores.sort((a,b)=>b[1]-a[1])[0];
+  const weakest  = pillarScores.sort((a,b)=>a[1]-b[1])[0];
+
+  return {
+    keystone: keystone[0],
+    keystoneScore: Math.round(keystone[1]*25),
+    weakest: weakest[0],
+    weakestScore: Math.round(weakest[1]*25),
+    rippleMap: RIPPLE_MAP,
+    scores,
+  };
+};
+
 module.exports = {
   getConsistencyScores,
   getStreakAnalysis,
   detectPatterns,
   getImpactTrends,
   packageContextForAI,
+  detectCrossPillarPatterns,
+  getPillarRippleEffect,
 };

@@ -4,6 +4,7 @@ const express = require("express");
 const cors = require("cors");
 const { pool, setupDB } = require("./db");
 const analytics = require("./analytics");
+const weekly = require('./weekly');
 const { generateInsight } = require("./ai");
 
 const app = express();
@@ -339,6 +340,86 @@ Estimate realistic values. If not food, return all zeros.` }
     } else {
       res.status(500).json({ error: "Could not analyse photo: " + err.message });
     }
+  }
+});
+
+// ── CROSS-PILLAR PATTERNS ────────────────────────────────
+app.get("/api/cross-patterns/:deviceId", async (req, res) => {
+  const { deviceId } = req.params;
+  try {
+    const [crossPatterns, ripple] = await Promise.all([
+      analytics.detectCrossPillarPatterns(deviceId),
+      analytics.getPillarRippleEffect(deviceId),
+    ]);
+    res.json({ patterns: crossPatterns, ripple });
+  } catch (err) {
+    console.error("Cross-patterns error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── PREDICTIVE NUDGE ──────────────────────────────────────
+app.post("/api/predictive-nudge", async (req, res) => {
+  const { deviceId, currentPillarData } = req.body;
+  try {
+    const [crossPatterns, consistency] = await Promise.all([
+      analytics.detectCrossPillarPatterns(deviceId),
+      analytics.getConsistencyScores(deviceId),
+    ]);
+
+    // Find most urgent actionable pattern
+    const urgent = crossPatterns
+      .filter(p => p.actionable && p.severity === "high")
+      .sort((a,b) => a.severity === "high" ? -1 : 1)[0]
+      || crossPatterns.find(p => p.actionable);
+
+    if (!urgent) return res.json({ nudge: null });
+
+    // Generate AI nudge based on pattern
+    const { rows: userRows } = await pool.query("SELECT name FROM users WHERE id=$1", [deviceId]);
+    const name = userRows[0]?.name || "there";
+
+    const prompt = `You are CoreSix. Generate a gentle, specific nudge for ${name} based on this cross-pillar pattern:
+
+Pattern: ${urgent.title}
+Context: ${urgent.message}
+Suggested action: ${urgent.suggestion}
+Pillars affected: ${urgent.pillars.join(", ")}
+
+Write ONE sentence that feels like it comes from a wise friend who noticed something important.
+Do NOT be alarming. Be warm and specific. Reference the connection between pillars.`;
+
+    const { callGroq } = require("./ai");
+    const nudgeText = await callGroq(prompt, undefined, 80);
+
+    res.json({
+      nudge: {
+        text: nudgeText,
+        pattern: urgent,
+        priority: urgent.severity,
+      }
+    });
+  } catch (err) {
+    console.error("Nudge error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── WEEKLY INTELLIGENCE REPORT ───────────────────────────
+app.post("/api/weekly-report", async (req, res) => {
+  const { deviceId, weekData } = req.body;
+  if (!deviceId || !weekData) return res.status(400).json({ error: "deviceId and weekData required" });
+
+  try {
+    // Get user name
+    const { rows } = await pool.query("SELECT name FROM users WHERE id=$1", [deviceId]);
+    const userName = rows[0]?.name || "there";
+
+    const result = await weekly.generateWeeklyReport(deviceId, weekData, userName);
+    res.json(result);
+  } catch (err) {
+    console.error("Weekly report error:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 
