@@ -22,15 +22,25 @@ const collectWeeklyData = async (userId, weekData) => {
     focus:   scoreFocus(focus),
   };
 
-  const overall = Math.round(Object.values(scores).reduce((a,b)=>a+b,0) / 6);
+  // Only score pillars that have data — skip inactive pillars
+  // A user focusing on 3 pillars should not be penalised for the other 3
+  const activeScores = Object.entries(scores).filter(([_,s])=>s>0);
+  const overall = activeScores.length > 0
+    ? Math.round(activeScores.reduce((a,[_,s])=>a+s,0) / activeScores.length)
+    : 0;
 
-  return { scores, overall, streak };
+  // Mark which pillars are active
+  const activePillars = activeScores.map(([p])=>p);
+
+  return { scores, overall, streak, activePillars };
 };
 
 // ── PILLAR SCORERS ────────────────────────────────────────
+// Returns 0 if no data — caller should skip 0-score pillars
 const scoreFuel = (fuel={}) => {
   let score = 0;
   const meals = (fuel.meals||[]);
+  if (!meals.length && !(fuel.waterGlasses) && !fuel.setup) return 0; // No data
   if (meals.length >= 2) score += 30;
   if (meals.length >= 3) score += 10;
   const targets = fuel.targets || {calories:2000,protein:150};
@@ -210,8 +220,10 @@ const generateWeeklyReport = async (userId, weekData, userName) => {
   const prompt = `
 Write a personalised weekly wellness report for ${userName||"this person"}.
 
-Their pillar scores this week:
+Their ACTIVE pillar scores this week (pillars not listed = user is not focusing on them, do NOT penalise):
 ${scoreLines}
+
+IMPORTANT: Only analyse pillars listed above. Never mention or score missing pillars as failures.
 
 Overall score: ${overall}/100
 Current streak: ${streak} days

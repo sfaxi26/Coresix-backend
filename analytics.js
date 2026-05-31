@@ -444,33 +444,38 @@ const detectCrossPillarPatterns = async (userId) => {
     });
   }
 
-  // ── PATTERN 7: NEGLECTED PILLAR AFFECTING OTHERS ─────
+  // ── PATTERN 7: NEGLECTED ACTIVE PILLAR ──────────────
+  // Only flag pillars the user is actively tracking — not all 6
+  // Users focus on 1-3 pillars at a time by design
   const checkedPillars = Object.keys(pillarActivity);
-  const allPillars = ["fuel","move","rest","calm","connect","focus"];
-  const neglected = allPillars.filter(p=>!checkedPillars.includes(p));
-  if (neglected.length > 0) {
+
+  // Get user's active pillars from ladder (pillars they've selected habits for)
+  const { rows: ladderRows } = await pool.query(`
+    SELECT pillar FROM ladder
+    WHERE user_id = $1 AND selected_habit IS NOT NULL AND selected_habit != ''
+  `, [userId]);
+  const activePillars = ladderRows.map(r=>r.pillar);
+
+  // Only warn about neglect if pillar is active AND has been checked before
+  // Never penalise for not tracking a pillar the user isn't focused on
+  if (activePillars.length > 0 && checkedPillars.length > 0) {
+    const neglectedActive = activePillars.filter(p=>!checkedPillars.includes(p));
     const rippleMap = {
-      rest: ["focus","calm"],
-      move: ["calm","fuel"],
-      fuel: ["focus","move"],
-      calm: ["connect","focus"],
-      connect: ["calm"],
-      focus: ["move"],
+      rest:["focus","calm"], move:["calm","fuel"], fuel:["focus","move"],
+      calm:["connect","focus"], connect:["calm"], focus:["move"],
     };
-    neglected.forEach(p => {
+    neglectedActive.slice(0,1).forEach(p => { // Max 1 neglect warning
       const affected = rippleMap[p] || [];
-      if (affected.length > 0) {
-        patterns.push({
-          type: "neglect_ripple",
-          severity: "medium",
-          pillars: [p, ...affected],
-          title: `${p.charAt(0).toUpperCase()+p.slice(1)} neglect may affect other pillars`,
-          message: `You haven't checked in on ${p} this week. Research shows neglecting this pillar often impacts ${affected.join(" and ")}.`,
-          suggestion: `Even one small ${p} habit today can break the ripple effect.`,
-          icon: "🔗",
-          actionable: true,
-        });
-      }
+      patterns.push({
+        type: "neglect_ripple",
+        severity: "low",
+        pillars: [p, ...affected],
+        title: `${p.charAt(0).toUpperCase()+p.slice(1)} hasn't been checked in recently`,
+        message: `You have a habit selected for ${p} but haven't logged it this week. This is just a gentle reminder — focus on your main pillars first.`,
+        suggestion: `When you're ready, even one ${p} check-in this week keeps the momentum going.`,
+        icon: "💡",
+        actionable: true,
+      });
     });
   }
 
