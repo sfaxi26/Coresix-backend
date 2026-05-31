@@ -6,21 +6,52 @@ const { callGroq } = require("./ai");
 
 // ── COLLECT WEEKLY DATA ───────────────────────────────────
 const collectWeeklyData = async (userId, weekData) => {
-  // weekData comes from the app — all 6 pillar tracking data
   const {
     fuel, move, rest, calm, connect, focus,
     streak, activePillars, weeklyImpact
   } = weekData;
 
-  // Score each pillar 0-100
-  const scores = {
-    fuel:    scoreFuel(fuel),
-    move:    scoreMove(move),
-    rest:    scoreRest(rest),
-    calm:    scoreCalm(calm),
-    connect: scoreConnect(connect),
-    focus:   scoreFocus(focus),
-  };
+  // Get habit check-in counts from DB — THIS is the primary metric
+  const { rows: checkinRows } = await pool.query(`
+    SELECT pillar, COUNT(DISTINCT date) as days_checked
+    FROM checkins
+    WHERE user_id = $1
+    AND created_at > NOW() - INTERVAL '7 days'
+    GROUP BY pillar
+  `, [userId]);
+
+  const habitDays = {};
+  checkinRows.forEach(r => { habitDays[r.pillar] = parseInt(r.days_checked); });
+
+  // Score each pillar — habits are primary (70%), tracking data is bonus (30%)
+  const scores = {};
+  const PILLARS = ["fuel","move","rest","calm","connect","focus"];
+
+  PILLARS.forEach(pillar => {
+    const days = habitDays[pillar] || 0;
+    if (days === 0) return; // Skip pillars with no habit data
+
+    // Primary score: habit consistency (70 points max)
+    let habitScore = 0;
+    if (days >= 7) habitScore = 70;
+    else if (days >= 5) habitScore = 60;
+    else if (days >= 3) habitScore = 45;
+    else if (days >= 1) habitScore = 25;
+
+    // Bonus score: tracking data (30 points max)
+    let trackingBonus = 0;
+    const trackingData = {fuel,move,rest,calm,connect,focus}[pillar];
+    if (trackingData) {
+      if (pillar==="fuel" && (trackingData.meals||[]).length>0) trackingBonus += 30;
+      if (pillar==="move" && ((trackingData.stepsToday||0)>0||(trackingData.workouts||[]).length>0)) trackingBonus += 30;
+      if (pillar==="rest" && trackingData.bedtime) trackingBonus += 30;
+      if (pillar==="calm" && ((trackingData.calmActivities||[]).length>0||trackingData.stressLevel>0)) trackingBonus += 30;
+      if (pillar==="connect" && (trackingData.connections||[]).length>0) trackingBonus += 30;
+      if (pillar==="focus" && (trackingData.pomodoros||0)>0) trackingBonus += 30;
+    }
+
+    scores[pillar] = Math.min(100, habitScore + trackingBonus);
+  });
 
   // Only score pillars that have data — skip inactive pillars
   // A user focusing on 3 pillars should not be penalised for the other 3
@@ -220,10 +251,19 @@ const generateWeeklyReport = async (userId, weekData, userName) => {
   const prompt = `
 Write a personalised weekly wellness report for ${userName||"this person"}.
 
-Their ACTIVE pillar scores this week (pillars not listed = user is not focusing on them, do NOT penalise):
+Their ACTIVE pillar scores this week.
+Score = based on habit check-ins (primary) + optional tracking data (bonus).
+Pillars not listed = user is not focused on them. Do NOT mention them.
+
 ${scoreLines}
 
-IMPORTANT: Only analyse pillars listed above. Never mention or score missing pillars as failures.
+HOW TO READ THESE SCORES:
+- 70-100 = Excellent habit consistency this week
+- 45-69  = Good — showing up most days
+- 25-44  = Developing — needs more consistency
+- Tracking bonus adds up to 30 extra points if they logged meals/steps/sleep etc
+
+IMPORTANT: If someone scored 70 on Move with no tracking data — they did their habit every day. That is EXCELLENT. Do not mention missing tracking.
 
 Overall score: ${overall}/100
 Current streak: ${streak} days

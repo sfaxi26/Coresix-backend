@@ -317,25 +317,46 @@ const detectCrossPillarPatterns = async (userId) => {
     LIMIT 20
   `, [userId]);
 
-  // Build pillar activity map
+  // Build pillar activity map from HABIT CHECK-INS (primary metric)
   const pillarActivity = {};
   checkinRows.forEach(r => {
     if (!pillarActivity[r.pillar]) pillarActivity[r.pillar] = [];
     pillarActivity[r.pillar].push(r.date);
   });
 
-  // Build impact score map
+  // Build pillar consistency scores — based on habit checkins only
+  const pillarConsistency = {};
+  Object.entries(pillarActivity).forEach(([pillar, dates]) => {
+    pillarConsistency[pillar] = dates.length; // days checked in this week
+  });
+
+  // Build impact score map (weekly self-ratings — optional)
   const impactByPillar = {};
   impactRows.forEach(r => {
     if (!impactByPillar[r.pillar]) impactByPillar[r.pillar] = [];
     impactByPillar[r.pillar].push({ score: r.score, date: r.created_at });
   });
 
+  // Only analyse pillars where user has done habit checkins
+  // Missing checkins = user not focusing on that pillar, NOT a failure
+  const activePillarList = Object.keys(pillarActivity);
+  if (activePillarList.length === 0) return patterns; // No data yet
+
   // ── PATTERN 1: REST → FOCUS ───────────────────────────
-  // If rest score is low and focus score is also low
+  // Only check patterns for pillars user is actively working on
+  const restDays = pillarConsistency.rest || 0;
+  const focusDays = pillarConsistency.focus || 0;
+  const moveDays = pillarConsistency.move || 0;
+  const calmDays = pillarConsistency.calm || 0;
+  const connectDays = pillarConsistency.connect || 0;
+  const fuelDays = pillarConsistency.fuel || 0;
+
+  // Use impact scores as secondary signal (self-rated weekly feelings)
   const restScore = impactByPillar.rest?.[0]?.score ?? null;
   const focusScore = impactByPillar.focus?.[0]?.score ?? null;
-  if (restScore !== null && focusScore !== null) {
+
+  // Only detect pattern if BOTH pillars are active
+  if (restDays > 0 && focusDays > 0 && restScore !== null && focusScore !== null) {
     if (restScore <= 1 && focusScore <= 1) {
       patterns.push({
         type: "rest_focus_link",
@@ -364,7 +385,7 @@ const detectCrossPillarPatterns = async (userId) => {
   // ── PATTERN 2: MOVE → CALM ────────────────────────────
   const moveScore = impactByPillar.move?.[0]?.score ?? null;
   const calmScore = impactByPillar.calm?.[0]?.score ?? null;
-  if (moveScore !== null && calmScore !== null) {
+  if (moveDays > 0 && calmDays > 0 && moveScore !== null && calmScore !== null) {
     if (moveScore <= 1 && calmScore <= 1) {
       patterns.push({
         type: "move_calm_link",
@@ -381,7 +402,7 @@ const detectCrossPillarPatterns = async (userId) => {
 
   // ── PATTERN 3: CONNECT → CALM ─────────────────────────
   const connectScore = impactByPillar.connect?.[0]?.score ?? null;
-  if (connectScore !== null && calmScore !== null) {
+  if (connectDays > 0 && calmDays > 0 && connectScore !== null && calmScore !== null) {
     if (connectScore <= 1 && calmScore <= 1) {
       patterns.push({
         type: "isolation_stress",
@@ -398,7 +419,7 @@ const detectCrossPillarPatterns = async (userId) => {
 
   // ── PATTERN 4: FUEL → FOCUS ───────────────────────────
   const fuelScore = impactByPillar.fuel?.[0]?.score ?? null;
-  if (fuelScore !== null && focusScore !== null) {
+  if (fuelDays > 0 && focusDays > 0 && fuelScore !== null && focusScore !== null) {
     if (fuelScore <= 1 && focusScore <= 1) {
       patterns.push({
         type: "fuel_focus_link",
@@ -414,7 +435,7 @@ const detectCrossPillarPatterns = async (userId) => {
   }
 
   // ── PATTERN 5: REST → CALM ────────────────────────────
-  if (restScore !== null && calmScore !== null) {
+  if (restDays > 0 && calmDays > 0 && restScore !== null && calmScore !== null) {
     if (restScore <= 1 && calmScore <= 1) {
       patterns.push({
         type: "rest_calm_link",
