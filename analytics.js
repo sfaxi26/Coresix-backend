@@ -516,6 +516,208 @@ const getPillarRippleEffect = async (userId) => {
   };
 };
 
+// ── PREDICTIVE WARNINGS ENGINE ───────────────────────────
+// Fires BEFORE problems happen — not after
+const generatePredictiveWarnings = async (userId) => {
+  const warnings = [];
+  const today = new Date();
+  const dayOfWeek = today.getDay(); // 0=Sun, 1=Mon...5=Fri, 6=Sat
+  const dayName = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][dayOfWeek];
+
+  // ── WARNING 1: STREAK RISK BY DAY OF WEEK ────────────────
+  const { rows: streakByDay } = await pool.query(`
+    SELECT EXTRACT(DOW FROM created_at) as day, COUNT(*) as checkins
+    FROM checkins
+    WHERE user_id = $1
+    AND created_at > NOW() - INTERVAL '60 days'
+    GROUP BY day
+    ORDER BY day
+  `, [userId]);
+
+  const dayCheckins = {};
+  streakByDay.forEach(r => { dayCheckins[parseInt(r.day)] = parseInt(r.checkins); });
+
+  const avgCheckins = Object.values(dayCheckins).reduce((a,b)=>a+b,0) / Math.max(Object.keys(dayCheckins).length,1);
+  const todayCheckins = dayCheckins[dayOfWeek] || 0;
+  const tomorrowCheckins = dayCheckins[(dayOfWeek+1)%7] || 0;
+
+  if (todayCheckins < avgCheckins * 0.5) {
+    warnings.push({
+      type: "streak_risk_today",
+      severity: "high",
+      timing: "today",
+      title: `${dayName}s are your risk day`,
+      message: `Your data shows ${dayName}s are your lowest check-in day. Your streak is at risk today.`,
+      suggestion: "Do your habits earlier today than usual — don't leave them for the evening.",
+      icon: "⚠️",
+      actionable: true,
+      urgency: 9,
+    });
+  } else if (tomorrowCheckins < avgCheckins * 0.5) {
+    const tomorrow = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][(dayOfWeek+1)%7];
+    warnings.push({
+      type: "streak_risk_tomorrow",
+      severity: "medium",
+      timing: "tomorrow",
+      title: `${tomorrow} is historically your hard day`,
+      message: `Based on your data, ${tomorrow}s are when you most often miss habits. Tomorrow could be tough.`,
+      suggestion: "Plan your habits for tomorrow now — decide exactly when you will do them.",
+      icon: "📅",
+      actionable: true,
+      urgency: 6,
+    });
+  }
+
+  // ── WARNING 2: SLEEP DECLINE → FOCUS PREDICTION ──────────
+  const { rows: recentCheckins } = await pool.query(`
+    SELECT date, COUNT(DISTINCT pillar) as pillars
+    FROM checkins
+    WHERE user_id = $1
+    AND created_at > NOW() - INTERVAL '5 days'
+    GROUP BY date
+    ORDER BY date DESC
+  `, [userId]);
+
+  const last3Days = recentCheckins.slice(0,3);
+  const declining = last3Days.length >= 2 &&
+    last3Days[0].pillars < last3Days[last3Days.length-1].pillars;
+
+  if (declining) {
+    warnings.push({
+      type: "declining_streak",
+      severity: "high",
+      timing: "today",
+      title: "Habit momentum is dropping",
+      message: "You've completed fewer habits each day this week. This pattern usually leads to a streak break within 1-2 days.",
+      suggestion: "Today — do just ONE habit. Momentum matters more than perfection right now.",
+      icon: "📉",
+      actionable: true,
+      urgency: 8,
+    });
+  }
+
+  // ── WARNING 3: WEEKEND PREPARATION ───────────────────────
+  if (dayOfWeek === 5) { // Friday
+    const { rows: weekendData } = await pool.query(`
+      SELECT COUNT(*) as weekend_checkins
+      FROM checkins
+      WHERE user_id = $1
+      AND EXTRACT(DOW FROM created_at) IN (0, 6)
+      AND created_at > NOW() - INTERVAL '30 days'
+    `, [userId]);
+
+    const weekendAvg = parseInt(weekendData[0]?.weekend_checkins || 0) / 4;
+    const { rows: weekdayData } = await pool.query(`
+      SELECT COUNT(*) as weekday_checkins
+      FROM checkins
+      WHERE user_id = $1
+      AND EXTRACT(DOW FROM created_at) NOT IN (0, 6)
+      AND created_at > NOW() - INTERVAL '30 days'
+    `, [userId]);
+
+    const weekdayAvg = parseInt(weekdayData[0]?.weekday_checkins || 0) / 20;
+
+    if (weekendAvg < weekdayAvg * 0.6) {
+      warnings.push({
+        type: "weekend_preparation",
+        severity: "medium",
+        timing: "this weekend",
+        title: "Weekend is your challenge window",
+        message: "Your weekday habits are strong but weekends show a significant drop. The next 48 hours are critical for your streak.",
+        suggestion: "Set a specific time for tomorrow's habits right now — morning works best. Decide before the weekend starts.",
+        icon: "📅",
+        actionable: true,
+        urgency: 7,
+      });
+    }
+  }
+
+  // ── WARNING 4: RELAPSE PATTERN DETECTION ─────────────────
+  const { rows: gapData } = await pool.query(`
+    SELECT date,
+           LAG(date) OVER (ORDER BY date) as prev_date,
+           date::date - LAG(date::date) OVER (ORDER BY date) as gap_days
+    FROM (
+      SELECT DISTINCT date FROM checkins
+      WHERE user_id = $1
+      AND created_at > NOW() - INTERVAL '60 days'
+    ) d
+    ORDER BY date DESC
+    LIMIT 10
+  `, [userId]);
+
+  const gaps = gapData.map(r=>parseInt(r.gap_days)).filter(g=>!isNaN(g)&&g>1);
+  const avgGap = gaps.length ? gaps.reduce((a,b)=>a+b,0)/gaps.length : 0;
+
+  if (avgGap >= 3 && avgGap <= 7) {
+    warnings.push({
+      type: "relapse_cycle",
+      severity: "medium",
+      timing: "awareness",
+      title: `You tend to take ${Math.round(avgGap)}-day breaks`,
+      message: `Your data shows a pattern: you build momentum then take a ${Math.round(avgGap)}-day break. You may be approaching one now.`,
+      suggestion: "Recognise the pattern. Tomorrow — do the smallest possible version of your habit to break the cycle.",
+      icon: "🔄",
+      actionable: true,
+      urgency: 5,
+    });
+  }
+
+  // ── WARNING 5: EVENING CHECK — NOT DONE YET ──────────────
+  const hour = today.getHours();
+  if (hour >= 19) { // After 7pm
+    const todayDate = today.toISOString().slice(0,10);
+    const { rows: todayCheckinData } = await pool.query(`
+      SELECT COUNT(DISTINCT pillar) as count
+      FROM checkins
+      WHERE user_id = $1 AND date = $2
+    `, [userId, todayDate]);
+
+    const todayCount = parseInt(todayCheckinData[0]?.count || 0);
+    if (todayCount === 0) {
+      warnings.push({
+        type: "evening_reminder",
+        severity: "high",
+        timing: "tonight",
+        title: "No habits logged today",
+        message: "It's evening and today's habits haven't been logged yet. Your streak is at risk tonight.",
+        suggestion: "Even one habit logged tonight keeps the streak alive. Which one is easiest right now?",
+        icon: "🌙",
+        actionable: true,
+        urgency: 10,
+      });
+    }
+  }
+
+  // ── WARNING 6: POSITIVE — PERSONAL BEST APPROACHING ──────
+  const { rows: streakData } = await pool.query(
+    "SELECT streak FROM users WHERE id=$1", [userId]
+  );
+  const currentStreak = parseInt(streakData[0]?.streak || 0);
+
+  const { rows: maxStreakData } = await pool.query(`
+    SELECT MAX(streak) as max_streak FROM users WHERE id=$1
+  `, [userId]);
+  const maxStreak = parseInt(maxStreakData[0]?.max_streak || 0);
+
+  if (currentStreak > 0 && maxStreak > 0 && currentStreak >= maxStreak - 3 && currentStreak < maxStreak) {
+    warnings.push({
+      type: "personal_best_approaching",
+      severity: "positive",
+      timing: "this week",
+      title: `Personal best in ${maxStreak - currentStreak} days`,
+      message: `Your longest ever streak is ${maxStreak} days. You're only ${maxStreak - currentStreak} days away from beating it.`,
+      suggestion: "This is worth protecting. Show up tomorrow.",
+      icon: "🏆",
+      actionable: false,
+      urgency: 7,
+    });
+  }
+
+  // Sort by urgency
+  return warnings.sort((a,b)=>b.urgency-a.urgency).slice(0,4);
+};
+
 module.exports = {
   getConsistencyScores,
   getStreakAnalysis,
@@ -524,4 +726,5 @@ module.exports = {
   packageContextForAI,
   detectCrossPillarPatterns,
   getPillarRippleEffect,
+  generatePredictiveWarnings,
 };

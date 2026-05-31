@@ -343,6 +343,18 @@ Estimate realistic values. If not food, return all zeros.` }
   }
 });
 
+// ── PREDICTIVE WARNINGS ──────────────────────────────────
+app.get("/api/warnings/:deviceId", async (req, res) => {
+  const { deviceId } = req.params;
+  try {
+    const warnings = await analytics.generatePredictiveWarnings(deviceId);
+    res.json({ warnings });
+  } catch (err) {
+    console.error("Warnings error:", err);
+    res.status(500).json({ error: err.message, warnings: [] });
+  }
+});
+
 // ── CROSS-PILLAR PATTERNS ────────────────────────────────
 app.get("/api/cross-patterns/:deviceId", async (req, res) => {
   const { deviceId } = req.params;
