@@ -343,6 +343,152 @@ Estimate realistic values. If not food, return all zeros.` }
   }
 });
 
+// ── SMART NEXT WEEK PLAN ─────────────────────────────────
+app.post("/api/next-week-plan", async (req, res) => {
+  const { deviceId, weekData } = req.body;
+  if (!deviceId) return res.status(400).json({ error: "deviceId required" });
+
+  try {
+    const { rows: userRows } = await pool.query("SELECT name, streak FROM users WHERE id=$1", [deviceId]);
+    const user = userRows[0] || {};
+
+    // Get last 4 weeks of data
+    const { rows: checkinRows } = await pool.query(`
+      SELECT pillar, EXTRACT(DOW FROM created_at) as day_of_week,
+             COUNT(*) as checkins
+      FROM checkins
+      WHERE user_id = $1
+      AND created_at > NOW() - INTERVAL '28 days'
+      GROUP BY pillar, day_of_week
+      ORDER BY day_of_week
+    `, [deviceId]);
+
+    // Find weakest days per pillar
+    const dayNames = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+    const pillarWeakDays = {};
+    const dayCheckins = {};
+    checkinRows.forEach(r => {
+      const day = parseInt(r.day_of_week);
+      if (!dayCheckins[day]) dayCheckins[day] = 0;
+      dayCheckins[day] += parseInt(r.checkins);
+    });
+
+    // Find 2 lowest check-in days
+    const sortedDays = Object.entries(dayCheckins)
+      .sort((a,b)=>a[1]-b[1])
+      .slice(0,2)
+      .map(([day])=>dayNames[parseInt(day)]);
+
+    // Get cross-pillar patterns
+    const crossPatterns = await analytics.detectCrossPillarPatterns(deviceId);
+    const warnings = await analytics.generatePredictiveWarnings(deviceId);
+
+    // Get pillar scores from weekly impact
+    const { rows: impactRows } = await pool.query(`
+      SELECT pillar, AVG(score) as avg
+      FROM weekly_impact
+      WHERE user_id = $1
+      AND created_at > NOW() - INTERVAL '14 days'
+      GROUP BY pillar
+      ORDER BY avg ASC
+    `, [deviceId]);
+
+    const weakPillars = impactRows.slice(0,3).map(r=>r.pillar);
+    const strongPillars = impactRows.slice(-2).map(r=>r.pillar);
+
+    const PILLAR_NAMES = {fuel:"Fuel",move:"Move",rest:"Rest",calm:"Calm",connect:"Connect",focus:"Focus"};
+    const PILLAR_EMOJIS = {fuel:"⚡",move:"💪",rest:"😴",calm:"🧘",connect:"🤝",focus:"🎯"};
+
+    const nextMonday = new Date();
+    nextMonday.setDate(nextMonday.getDate() + (1 + 7 - nextMonday.getDay()) % 7 || 7);
+    const weekOf = nextMonday.toLocaleDateString("en",{month:"long",day:"numeric"});
+
+    const { callGroq } = require("./ai");
+
+    const prompt = `Create a Smart Next Week Plan for ${user.name||"this person"} based on their CoreSix data.
+
+Week of: ${weekOf}
+Current streak: ${user.streak || 0} days
+Weakest pillars this week: ${weakPillars.map(p=>`${PILLAR_EMOJIS[p]} ${PILLAR_NAMES[p]}`).join(", ")||"unknown"}
+Strongest pillars: ${strongPillars.map(p=>`${PILLAR_EMOJIS[p]} ${PILLAR_NAMES[p]}`).join(", ")||"unknown"}
+Historically hard days: ${sortedDays.join(" and ")||"unknown"}
+Active cross-pillar patterns: ${crossPatterns.slice(0,2).map(p=>p.message).join("; ")||"none detected"}
+Current warnings: ${warnings.slice(0,2).map(w=>w.title).join("; ")||"none"}
+This week's data: ${JSON.stringify(weekData||{})}
+
+Generate exactly 3 specific action items for next week. Each action must:
+1. Reference a specific day or time window
+2. Be based on their actual data — not generic advice
+3. Address their weakest areas or break a detected pattern
+4. Be achievable in 5-15 minutes
+
+Format your response as JSON only — no markdown, no explanation:
+{
+  "week_of": "${weekOf}",
+  "headline": "one sentence summarising the theme of next week",
+  "actions": [
+    {
+      "pillar": "rest",
+      "emoji": "😴",
+      "title": "Short action title",
+      "description": "Specific description referencing their data and exact days/times",
+      "days": ["Wednesday", "Thursday"],
+      "why": "One sentence explaining why this matters based on their patterns"
+    },
+    {
+      "pillar": "move",
+      "emoji": "💪",
+      "title": "Short action title",
+      "description": "Specific description",
+      "days": ["Tuesday", "Friday"],
+      "why": "Why this matters for them specifically"
+    },
+    {
+      "pillar": "connect",
+      "emoji": "🤝",
+      "title": "Short action title",
+      "description": "Specific description",
+      "days": ["Thursday"],
+      "why": "Why this matters for them specifically"
+    }
+  ],
+  "protect": "One sentence about what is already working and must be protected",
+  "streak_note": "One sentence about the streak — honest, not generic"
+}`;
+
+    const raw = await callGroq(prompt, undefined, 600);
+    let plan;
+    try {
+      const clean = raw.replace(/```json|```/g,"").trim();
+      plan = JSON.parse(clean);
+    } catch {
+      // Fallback plan
+      plan = {
+        week_of: weekOf,
+        headline: "This week — protect what works and strengthen what doesn't.",
+        actions: [
+          { pillar:"rest", emoji:"😴", title:"Protect your sleep", description:"Set a consistent bedtime for at least 4 nights this week.", days:["Monday","Tuesday","Wednesday","Thursday"], why:"Rest is the foundation everything else builds on." },
+          { pillar:"move", emoji:"💪", title:"Move every day", description:"10 minutes of movement — walk, stretch, or workout.", days:["Monday","Tuesday","Wednesday","Thursday","Friday"], why:"Daily movement compounds faster than intense occasional sessions." },
+          { pillar:"connect", emoji:"🤝", title:"One genuine connection", description:"Send one meaningful message to someone you've been meaning to reach out to.", days:["Wednesday"], why:"Connection is the most underinvested pillar for most people." },
+        ],
+        protect: "Keep doing what's working — your habits are building.",
+        streak_note: `Your ${user.streak||0}-day streak is real progress. Protect it.`,
+      };
+    }
+
+    // Save to insights
+    await pool.query(
+      "INSERT INTO insights (user_id, insight_type, content, context) VALUES ($1, $2, $3, $4)",
+      [deviceId, "next_week_plan", JSON.stringify(plan), JSON.stringify({weakPillars, sortedDays})]
+    );
+
+    res.json({ plan });
+  } catch (err) {
+    console.error("Next week plan error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── MONTHLY PROGRESS LETTER ──────────────────────────────
 app.post("/api/monthly-letter", async (req, res) => {
   const { deviceId, monthData } = req.body;
