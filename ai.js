@@ -97,6 +97,56 @@ Goal: ${user.goal}
 Write a gentle, specific nudge that addresses this pattern without naming it directly.
 Sound like a wise friend, not a notification. Max 2 sentences.`,
 
+    focus_insight: `
+Generate a personalised focus and productivity coaching insight:
+${context.pillar || "{}"}
+
+Rules:
+- Reference their specific Focus habit
+- If pomodoros done — celebrate deep work specifically
+- Reference energy level if available — timing of deep work matters
+- If distractions logged — acknowledge awareness as the first step
+- If MIT set — reference it specifically
+- Cal Newport / BJ Fogg inspired tone — direct, science-backed
+- Max 2 sentences.`,
+
+    connect_insight: `
+Generate a personalised connection coaching insight:
+${context.pillar || "{}"}
+
+Rules:
+- Reference their Connect habit specifically
+- If they logged connections — acknowledge quality and type
+- Reference social battery level — if low, suggest one small action
+- If kindness acts done — reinforce the science (giving = receiving in neuroscience)
+- Warm, human tone — like a wise friend, not a coach
+- Max 2 sentences.`,
+
+    calm_insight: `
+Generate a personalised stress and calm coaching insight:
+${context.pillar || "{}"}
+
+Rules:
+- Reference their stress level (1-10) — if high (7+) be extra gentle
+- Reference their mood if available
+- Acknowledge activities they completed
+- If gratitude done — reinforce the neuroscience
+- One specific suggestion for reducing stress right now
+- Never alarm or medicalise stress — normalise it
+- Max 2 sentences. Warm, human, grounded tone.`,
+
+    rest_insight: `
+Generate a personalised sleep coaching insight based on this data:
+${context.pillar || "{}"}
+
+Rules:
+- Reference their specific Rest habit
+- Reference their sleep hours and quality if available
+- If wind-down routine items completed — acknowledge them
+- Gentle, science-backed tone — never shame poor sleep
+- One specific tip for tonight if sleep was poor
+- Max 2 sentences.`,
+
     move_insight: `
 Generate a personalised movement coaching insight based on this data:
 ${context.pillar || "{}"}
