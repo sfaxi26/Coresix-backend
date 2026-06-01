@@ -236,61 +236,44 @@ const detectCrossPillarPatterns = (scores, weekHistory=[]) => {
 const generateWeeklyReport = async (userId, weekData, userName) => {
   const { scores, overall, streak } = await collectWeeklyData(userId, weekData);
   const analysis = detectCrossPillarPatterns(scores);
+  analysis.habitDays = habitDays; // Pass habit days for report context
 
   const PILLAR_EMOJIS = {fuel:"⚡",move:"💪",rest:"😴",calm:"🧘",connect:"🤝",focus:"🎯"};
   const PILLAR_NAMES  = {fuel:"Fuel",move:"Move",rest:"Rest",calm:"Calm",connect:"Connect",focus:"Focus"};
 
-  const scoreLines = Object.entries(scores)
-    .map(([p,s])=>`${PILLAR_EMOJIS[p]} ${PILLAR_NAMES[p]}: ${s}/100`)
+  // Only show active pillars (those with habit check-ins this week)
+  const activeEntries = Object.entries(scores).filter(([_,s])=>s>0);
+  const activePillarNames = activeEntries.map(([p])=>PILLAR_NAMES[p]).join(", ");
+  const scoreLines = activeEntries
+    .map(([p,s])=>`${PILLAR_EMOJIS[p]} ${PILLAR_NAMES[p]}: ${s}/100 (habit done ${habitDays[p]||0}/7 days)`)
     .join("\n");
+  const patternLines = (analysis.patterns||[]).map(p=>`- ${p.message}`).join("\n");
 
-  const patternLines = analysis.patterns
-    .map(p=>`- ${p.message}`)
-    .join("\n");
+  const prompt = `Write a weekly wellness report for ${userName||"this person"}.
 
-  const prompt = `
-Write a personalised weekly wellness report for ${userName||"this person"}.
+STRICT RULES:
+- Active pillars this week: ${activePillarNames||"none yet"}
+- ONLY comment on pillars listed above. Completely ignore all others.
+- Scores are based on HABIT consistency, not tracking data
+- Missing meal logs / steps / sleep data = fine, not a failure
+- ${activeEntries.length} strong pillars = great week
 
-Their ACTIVE pillar scores this week.
-Score = based on habit check-ins (primary) + optional tracking data (bonus).
-Pillars not listed = user is not focused on them. Do NOT mention them.
-
+Scores (habit days / 7):
 ${scoreLines}
 
-HOW TO READ THESE SCORES:
-- 70-100 = Excellent habit consistency this week
-- 45-69  = Good — showing up most days
-- 25-44  = Developing — needs more consistency
-- Tracking bonus adds up to 30 extra points if they logged meals/steps/sleep etc
+Overall: ${overall}/100 | Streak: ${streak} days
 
-IMPORTANT: If someone scored 70 on Move with no tracking data — they did their habit every day. That is EXCELLENT. Do not mention missing tracking.
+Patterns:
+${patternLines||"More data needed for patterns."}
 
-Overall score: ${overall}/100
-Current streak: ${streak} days
-Strongest pillar: ${PILLAR_NAMES[analysis.keystone]} (${analysis.keystoneScore}/100)
-Needs most attention: ${PILLAR_NAMES[analysis.weakest]} (${analysis.weakestScore}/100)
+Write these 5 sections:
+**This Week** - 2-3 sentences, reference habit days (e.g. "6/7 days on Move")
+**Your Biggest Win** - their best habit this week, be specific
+**The Connection You May Not Have Noticed** - one insight, active pillars only
+**Next Week — 3 Specific Actions** - for active pillars only, numbered
+**One Thought** - one powerful closing line
 
-Cross-pillar patterns detected:
-${patternLines||"No significant patterns yet — more data needed."}
-
-Write a report with exactly this structure (use these headers):
-**This Week**
-2-3 sentences summarising the week honestly. Reference specific scores. Sound like a coach who was watching.
-
-**Your Biggest Win**
-1-2 sentences about what they did best. Be specific. Reference the strongest pillar.
-
-**The Connection You May Not Have Noticed**
-1-2 sentences about ONE cross-pillar connection from their data. Make it feel like a discovery.
-
-**Next Week — 3 Specific Actions**
-Three numbered specific, actionable suggestions. Each one sentence. Reference their actual weak areas.
-
-**One Thought**
-End with one powerful coaching sentence. Make it land.
-
-Tone: warm, direct, science-backed. Like the best coach they never had.
-Do NOT use generic advice. Everything must reference their specific scores and patterns.`;
+Rules: warm, honest. Never mention inactive pillars. Never penalise missing tracking data.`
 
   try {
     const report = await callGroq(prompt, undefined, 600);

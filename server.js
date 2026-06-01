@@ -537,36 +537,47 @@ app.post("/api/monthly-letter", async (req, res) => {
 
     const { callGroq } = require("./ai");
 
-    const prompt = `Write a warm, personal monthly progress letter for ${user.name||"this person"} from CoreSix — their wellness coaching app.
+// Only mention pillars the person actually worked on
+    const activePillarList = Object.keys(pillarStats).filter(p=>pillarStats[p].days>0);
+    const activePillarSummary = activePillarList
+      .map(p=>`${p}: ${pillarStats[p].days} days`)
+      .join(", ");
 
-Their month in numbers:
-- Days they showed up: ${totalDays} out of 30
-- Current streak: ${user.streak || 0} days
-- Most active pillar: ${bestPillar?.[0] || "unknown"} (${bestPillar?.[1]?.days || 0} days)
-- Best impact score: ${mostImproved?.[0] || "unknown"} (${mostImproved?.[1] || 0}/100)
-- Additional data: ${JSON.stringify(monthData || {})}
+    const prompt = `Write a warm, personal monthly progress letter for ${user.name||"this person"} from CoreSix.
 
-Write the letter with this structure:
+STRICT RULES:
+- Only mention pillars they actually worked on: ${activePillarSummary||"building habits"}
+- DO NOT mention pillars with no data — user was not focusing on them
+- Habit consistency is the primary success metric
+- Missing tracking data (no meal logs, no step counts) is NOT a failure — never mention it
+- ${totalDays} days out of 30 is the real number — be honest about it
+
+Their month:
+- Days showed up: ${totalDays}/30
+- Streak: ${user.streak||0} days
+- Active pillars: ${activePillarSummary||"getting started"}
+- Best pillar: ${bestPillar?.[0]||"building"} (${bestPillar?.[1]?.days||0} days)
+
+Write this letter:
 
 Dear ${user.name||"there"},
 
-[Opening — 2 sentences acknowledging the month honestly. Not fake positivity. Real.]
+[Opening — honest, warm. Reference ${totalDays} days specifically.]
 
-[Progress section — 2-3 sentences about what the data shows. Reference specific numbers. Be honest if it was a hard month.]
+[Progress — what the habit data actually shows. Only mention active pillars.]
 
-[The shift you noticed — 1-2 sentences about one meaningful change in their data, however small.]
+[One shift you noticed — something meaningful, however small.]
 
-[What this means — 1-2 sentences connecting their habits to who they are becoming. Identity-based.]
+[Identity — connect habits to who they are becoming.]
 
-[Next month — 2 sentences with one specific focus for next month. Make it feel achievable.]
+[Next month — one specific focus. Achievable.]
 
-[Closing — one powerful sentence.]
+[Closing — one powerful line.]
 
 With you,
 CoreSix
 
-Tone: Like a letter from the best coach they never had. Warm but honest. Reference real numbers. Never generic.
-Max 300 words.`;
+Tone: best coach they never had. Warm, honest, specific. Max 280 words.`;
 
     const letter = await callGroq(prompt, undefined, 500);
 
