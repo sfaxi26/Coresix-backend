@@ -498,41 +498,26 @@ app.post("/api/monthly-letter", async (req, res) => {
     const { rows: userRows } = await pool.query("SELECT name, streak FROM users WHERE id=$1", [deviceId]);
     const user = userRows[0] || {};
 
-    // Get monthly stats
-    const { rows: checkinRows } = await pool.query(`
-      SELECT pillar, COUNT(*) as count,
-             COUNT(DISTINCT date) as days_active
-      FROM checkins
-      WHERE user_id = $1
-      AND created_at > NOW() - INTERVAL '30 days'
-      GROUP BY pillar
-    `, [deviceId]);
+    // Use data passed from the app (localStorage) — source of truth
+    // DB may be behind if user is testing with Simulate Next Day
+    const appHistory = monthData?.history || [];
+    const appStreak = monthData?.streak || user.streak || 0;
+    const appImpact = monthData?.weeklyImpact || {};
 
-    const { rows: impactRows } = await pool.query(`
-      SELECT pillar, AVG(score) as avg_score
-      FROM weekly_impact
-      WHERE user_id = $1
-      AND created_at > NOW() - INTERVAL '30 days'
-      GROUP BY pillar
-    `, [deviceId]);
-
-    const { rows: totalDaysRow } = await pool.query(`
-      SELECT COUNT(DISTINCT date) as days
-      FROM checkins
-      WHERE user_id = $1
-      AND created_at > NOW() - INTERVAL '30 days'
-    `, [deviceId]);
-
-    const totalDays = parseInt(totalDaysRow[0]?.days || 0);
+    // Calculate pillar stats from app history
     const pillarStats = {};
-    checkinRows.forEach(r => {
-      pillarStats[r.pillar] = { count: parseInt(r.count), days: parseInt(r.days_active) };
+    const PIDS = ["fuel","move","rest","calm","connect","focus"];
+    PIDS.forEach(pid => {
+      const days = appHistory.filter(h => h.pillars?.includes(pid)).length;
+      if (days > 0) pillarStats[pid] = { days, count: days };
     });
 
-    const impactScores = {};
-    impactRows.forEach(r => { impactScores[r.pillar] = Math.round(parseFloat(r.avg_score) * 25); });
-
+    const totalDays = Math.min(appHistory.length, 30);
     const bestPillar = Object.entries(pillarStats).sort((a,b)=>b[1].days-a[1].days)[0];
+
+    // Impact scores from weekly check-ins
+    const impactScores = {};
+    Object.entries(appImpact).forEach(([p,s]) => { impactScores[p] = Math.round((s/3)*100); });
     const mostImproved = Object.entries(impactScores).sort((a,b)=>b[1]-a[1])[0];
 
     const { callGroq } = require("./ai");
