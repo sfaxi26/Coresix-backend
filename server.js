@@ -246,10 +246,12 @@ app.get("/api/analytics/:deviceId", async (req, res) => {
 
 // Generate AI insight
 app.post("/api/insight", async (req, res) => {
-  const { deviceId, purpose, pillar } = req.body;
+  const { deviceId, purpose, pillar, rungContext } = req.body;
   try {
     const context = await analytics.packageContextForAI(deviceId, purpose);
     if (pillar) context.pillar = pillar;
+    // Merge rung context directly into context for prompt access
+    if (rungContext) Object.assign(context, rungContext);
 
     const insight = await generateInsight(context, purpose);
 

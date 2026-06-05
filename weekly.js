@@ -11,17 +11,32 @@ const collectWeeklyData = async (userId, weekData) => {
     streak, activePillars, weeklyImpact
   } = weekData;
 
-  // Get habit check-in counts from DB — THIS is the primary metric
-  const { rows: checkinRows } = await pool.query(`
-    SELECT pillar, COUNT(DISTINCT date) as days_checked
-    FROM checkins
-    WHERE user_id = $1
-    AND created_at > NOW() - INTERVAL '7 days'
-    GROUP BY pillar
-  `, [userId]);
-
+  // Get habit check-in counts — use app history as primary source of truth
+  // DB may lag behind when user is using Simulate Next Day in test mode
   const habitDays = {};
-  checkinRows.forEach(r => { habitDays[r.pillar] = parseInt(r.days_checked); });
+
+  // First try app history (passed from localStorage - always accurate)
+  const appHistory = weekData.history || [];
+  const recentHistory = appHistory.slice(-7);
+  if (recentHistory.length > 0) {
+    const PIDS = ["fuel","move","rest","calm","connect","focus"];
+    PIDS.forEach(pid => {
+      const days = recentHistory.filter(h => h.pillars?.includes(pid)).length;
+      if (days > 0) habitDays[pid] = days;
+    });
+  }
+
+  // Fall back to DB if no app history
+  if (Object.keys(habitDays).length === 0) {
+    const { rows: checkinRows } = await pool.query(`
+      SELECT pillar, COUNT(DISTINCT date) as days_checked
+      FROM checkins
+      WHERE user_id = $1
+      AND created_at > NOW() - INTERVAL '7 days'
+      GROUP BY pillar
+    `, [userId]);
+    checkinRows.forEach(r => { habitDays[r.pillar] = parseInt(r.days_checked); });
+  }
 
   // Score each pillar — habits are primary (70%), tracking data is bonus (30%)
   const scores = {};
@@ -63,7 +78,7 @@ const collectWeeklyData = async (userId, weekData) => {
   // Mark which pillars have scores this week
   const scoredPillars = activeScores.map(([p])=>p);
 
-  return { scores, overall, streak, activePillars: scoredPillars };
+  return { scores, overall, streak, activePillars: scoredPillars, habitDays };
 };
 
 // ── PILLAR SCORERS ────────────────────────────────────────
@@ -234,9 +249,9 @@ const detectCrossPillarPatterns = (scores, weekHistory=[]) => {
 
 // ── GENERATE WEEKLY REPORT ────────────────────────────────
 const generateWeeklyReport = async (userId, weekData, userName) => {
-  const { scores, overall, streak } = await collectWeeklyData(userId, weekData);
+  const { scores, overall, streak, habitDays } = await collectWeeklyData(userId, weekData);
   const analysis = detectCrossPillarPatterns(scores);
-  analysis.habitDays = habitDays; // Pass habit days for report context
+  analysis.habitDays = habitDays || {};
 
   const PILLAR_EMOJIS = {fuel:"⚡",move:"💪",rest:"😴",calm:"🧘",connect:"🤝",focus:"🎯"};
   const PILLAR_NAMES  = {fuel:"Fuel",move:"Move",rest:"Rest",calm:"Calm",connect:"Connect",focus:"Focus"};

@@ -112,13 +112,20 @@ Reference that emotions create habits. Max 2 sentences.`,
 
     weekly_insight: `
 Generate a weekly coaching insight for ${user.name}.
+
 Performance: ${performance.summary}
 ${patternSummary}
 ${trendSummary}
 Goal: ${user.goal}
 ${flags.weekend_struggle ? "They struggle on weekends — address this gently." : ""}
 ${flags.strong_performer ? "They are performing well — deepen the coaching, not just celebrate." : ""}
-Write a personalised weekly insight. 2-3 sentences. Sound like a real coach who knows them.`,
+
+IMPORTANT CONTEXT:
+- This person works across multiple pillars, each at their own rung level
+- Only comment on pillars they are actively working on
+- Reference their specific habits and rung progress where known
+- Habit check-ins = success. Missing tracking data is fine — never mention it negatively.
+- 2-3 sentences. Real coach who knows their journey — not generic advice.`,
 
     relapse_return: `
 ${user.name} is returning after a gap in their habits.
@@ -219,15 +226,28 @@ RULES:
 - Max 2 sentences. Warm, rung-aware.`,
 
     move_insight: `
-Generate a personalised movement coaching insight based on this data:
-${context.pillar || "{}"}
+Generate a personalised Move coaching insight for someone on their CoreSix journey.
 
-Rules:
-- Reference the specific Move habit they chose
-- Reference their actual step count and workout data
-- If habit goal is met — celebrate and suggest progression
-- If not met — encourage gently with one specific tip
-- Max 2 sentences. Sound like a real fitness coach who knows their day.`,
+Their data: ${context.pillar || "{}"}
+
+RUNG CONTEXT — use this to personalise your tone and content:
+- Current rung: ${context.rung_name || "Rung 1 — Foundation"}
+- Rung number: ${context.rung_num !== undefined ? context.rung_num + 1 : 1} of 5
+- Habits mastered this rung: ${context.mastered_count || 0}/3
+- Active habits: ${context.active_habits || "just starting"}
+- Mastered habits: ${context.mastered_habits || "none yet"}
+
+RULES:
+- Reference their specific rung and what it means for their Move journey
+- Rung 1: celebrate tiny wins — 5 push-ups, short walks. Identity is forming. Do not push gym workouts.
+- Rung 2: speak to daily movement becoming part of their life — not exercise, lifestyle
+- Rung 3: acknowledge real fitness progress — they have built a foundation worth building on
+- Rung 4: speak to consistent training schedule and discipline
+- Rung 5: acknowledge mastery — movement is now who they are, not what they do
+- Celebrate mastered habits — these are becoming who they are
+- Habit check-in = success. Steps/workout logs = optional bonus.
+- If habit contains [reason: ...] — extract and use that reason naturally in coaching
+- Max 2 sentences. Energetic, identity-focused, rung-aware.`,
 
     fuel_insight: `
 Generate a personalised Fuel coaching insight for someone on their CoreSix journey.
