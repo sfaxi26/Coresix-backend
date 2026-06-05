@@ -55,8 +55,6 @@ const collectWeeklyData = async (userId, weekData) => {
   // Get latest impact ratings from weekData
   const appImpact = weekData.weeklyImpact || {};
 
-  // Get impact history for trend analysis
-  const impactHistory = weekData.impactHistory || [];
 
   PILLARS.forEach(pillar => {
     const days = habitDays[pillar] || 0;
