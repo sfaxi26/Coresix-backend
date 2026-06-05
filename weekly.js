@@ -8,7 +8,10 @@ const { callGroq } = require("./ai");
 const collectWeeklyData = async (userId, weekData) => {
   const {
     fuel, move, rest, calm, connect, focus,
-    streak, activePillars, weeklyImpact
+    streak, activePillars, weeklyImpact,
+    history: appHistory2,
+    impactHistory,
+    ladder,
   } = weekData;
 
   // Get habit check-in counts — use app history as primary source of truth
@@ -38,34 +41,74 @@ const collectWeeklyData = async (userId, weekData) => {
     checkinRows.forEach(r => { habitDays[r.pillar] = parseInt(r.days_checked); });
   }
 
-  // Score each pillar — habits are primary (70%), tracking data is bonus (30%)
+  // ── 3-LAYER HABIT SCORE ──────────────────────────────────
+  // Layer 1: Consistency (40%) — did they show up?
+  // Layer 2: Rung progress (30%) — is it becoming automatic?
+  // Layer 3: Self-rated impact (30%) — is it actually working?
+
   const scores = {};
   const PILLARS = ["fuel","move","rest","calm","connect","focus"];
+
+  // Get rung data from weekData
+  const appLadder = weekData.ladder || {};
+
+  // Get latest impact ratings from weekData
+  const appImpact = weekData.weeklyImpact || {};
+
+  // Get impact history for trend analysis
+  const impactHistory = weekData.impactHistory || [];
 
   PILLARS.forEach(pillar => {
     const days = habitDays[pillar] || 0;
     if (days === 0) return; // Skip pillars with no habit data
 
-    // Primary score: habit consistency (70 points max)
-    let habitScore = 0;
-    if (days >= 7) habitScore = 70;
-    else if (days >= 5) habitScore = 60;
-    else if (days >= 3) habitScore = 45;
-    else if (days >= 1) habitScore = 25;
+    // ── LAYER 1: Consistency (40 points max) ──────────────
+    // How many days did they check in this week?
+    let consistencyScore = 0;
+    if (days >= 7) consistencyScore = 40;
+    else if (days >= 5) consistencyScore = 34;
+    else if (days >= 4) consistencyScore = 28;
+    else if (days >= 3) consistencyScore = 20;
+    else if (days >= 2) consistencyScore = 12;
+    else if (days >= 1) consistencyScore = 6;
 
-    // Bonus score: tracking data (30 points max)
-    let trackingBonus = 0;
-    const trackingData = {fuel,move,rest,calm,connect,focus}[pillar];
-    if (trackingData) {
-      if (pillar==="fuel" && (trackingData.meals||[]).length>0) trackingBonus += 30;
-      if (pillar==="move" && ((trackingData.stepsToday||0)>0||(trackingData.workouts||[]).length>0)) trackingBonus += 30;
-      if (pillar==="rest" && trackingData.bedtime) trackingBonus += 30;
-      if (pillar==="calm" && ((trackingData.calmActivities||[]).length>0||trackingData.stressLevel>0)) trackingBonus += 30;
-      if (pillar==="connect" && (trackingData.connections||[]).length>0) trackingBonus += 30;
-      if (pillar==="focus" && (trackingData.pomodoros||0)>0) trackingBonus += 30;
+    // ── LAYER 2: Rung Progress (30 points max) ────────────
+    // Higher rung = more mastery. Habits mastered in current rung = bonus.
+    let rungScore = 0;
+    const ladder = appLadder[pillar] || {};
+    const rung = ladder.rung || 0;
+    const habits = ladder.habits || [];
+    const masteredCount = habits.filter(h => h.mastered).length;
+
+    // Base rung score (0-20 points)
+    rungScore += Math.min(20, rung * 5); // Rung 1=5, Rung 2=10, Rung 3=15, Rung 4=20
+
+    // Mastery bonus within current rung (0-10 points)
+    rungScore += Math.min(10, masteredCount * 3.33);
+
+    // ── LAYER 3: Self-rated Impact (30 points max) ────────
+    // Weekly feeling rating (0-3 scale → 0-30 points)
+    let impactScore = 0;
+    const rating = appImpact[pillar]; // 0, 1, 2, or 3
+    if (rating !== undefined && rating !== null) {
+      impactScore = Math.round((rating / 3) * 30);
+    } else {
+      // No rating this week — use last known rating if available
+      const lastRated = [...impactHistory].reverse().find(h => h.answers?.[pillar] !== undefined);
+      if (lastRated) {
+        impactScore = Math.round((lastRated.answers[pillar] / 3) * 15); // Half weight for old data
+      }
     }
 
-    scores[pillar] = Math.min(100, habitScore + trackingBonus);
+    // ── TOTAL SCORE ───────────────────────────────────────
+    const total = Math.round(consistencyScore + rungScore + impactScore);
+    scores[pillar] = Math.min(100, total);
+  });
+
+  // Also calculate score labels for the report
+  const scoreLabels = {};
+  Object.entries(scores).forEach(([p, s]) => {
+    scoreLabels[p] = s >= 85 ? "Excellent" : s >= 70 ? "Strong" : s >= 55 ? "Building" : s >= 35 ? "Developing" : "Just starting";
   });
 
   // Only score pillars that have data — skip inactive pillars
@@ -78,7 +121,7 @@ const collectWeeklyData = async (userId, weekData) => {
   // Mark which pillars have scores this week
   const scoredPillars = activeScores.map(([p])=>p);
 
-  return { scores, overall, streak, activePillars: scoredPillars, habitDays };
+  return { scores, overall, streak, activePillars: scoredPillars, habitDays, scoreLabels };
 };
 
 // ── PILLAR SCORERS ────────────────────────────────────────
@@ -249,7 +292,7 @@ const detectCrossPillarPatterns = (scores, weekHistory=[]) => {
 
 // ── GENERATE WEEKLY REPORT ────────────────────────────────
 const generateWeeklyReport = async (userId, weekData, userName) => {
-  const { scores, overall, streak, habitDays } = await collectWeeklyData(userId, weekData);
+  const { scores, overall, streak, habitDays, scoreLabels } = await collectWeeklyData(userId, weekData);
   const analysis = detectCrossPillarPatterns(scores);
   analysis.habitDays = habitDays || {};
 
@@ -260,35 +303,67 @@ const generateWeeklyReport = async (userId, weekData, userName) => {
   const activeEntries = Object.entries(scores).filter(([_,s])=>s>0);
   const activePillarNames = activeEntries.map(([p])=>PILLAR_NAMES[p]).join(", ");
   const scoreLines = activeEntries
-    .map(([p,s])=>`${PILLAR_EMOJIS[p]} ${PILLAR_NAMES[p]}: ${s}/100 (habit done ${habitDays[p]||0}/7 days)`)
-    .join("\n");
+    .map(([p,s])=>{
+      const days = habitDays[p]||0;
+      const label = scoreLabels?.[p] || "";
+      const ladder = weekData.ladder?.[p] || {};
+      const rung = (ladder.rung||0) + 1;
+      const mastered = (ladder.habits||[]).filter(h=>h.mastered).length;
+      const impact = weekData.weeklyImpact?.[p];
+      const impactLabels = ["Struggling","Getting by","Improving","Thriving"];
+      const impactText = impact !== undefined ? impactLabels[impact] : "not rated";
+      return `${PILLAR_EMOJIS[p]} ${PILLAR_NAMES[p]}: ${s}/100 (${label})
+  → Consistency: ${days}/7 days checked in
+  → Rung progress: Rung ${rung}/5, ${mastered}/3 habits mastered
+  → Self-rated: ${impactText}`;
+    })
+    .join("\n\n");
+
+  // Build impact history for cross-pillar trend analysis
+  const impactHistoryLines = (weekData.impactHistory||[]).slice(-6).map((h,i)=>{
+    const ratings = Object.entries(h.answers||{})
+      .map(([p,s])=>`${PILLAR_NAMES[p]}=${s}`)
+      .join(", ");
+    return `Week ${i+1} (${h.date||""}): ${ratings}`;
+  }).join("\n");
+
   const patternLines = (analysis.patterns||[]).map(p=>`- ${p.message}`).join("\n");
 
-  const prompt = `Write a weekly wellness report for ${userName||"this person"}.
+  const prompt = `Write a deeply personalised weekly wellness report for ${userName||"this person"}.
 
-STRICT RULES:
-- Active pillars this week: ${activePillarNames||"none yet"}
-- ONLY comment on pillars listed above. Completely ignore all others.
-- Scores are based on HABIT consistency, not tracking data
-- Missing meal logs / steps / sleep data = fine, not a failure
-- ${activeEntries.length} strong pillars = great week
+SCORING SYSTEM — understand this:
+Each pillar score (0-100) has 3 components:
+- Consistency (40%): how many days they checked in
+- Rung progress (30%): their mastery level and habit automation
+- Self-rated impact (30%): how they felt this pillar affected their life
 
-Scores (habit days / 7):
+ACTIVE PILLARS THIS WEEK:
 ${scoreLines}
 
-Overall: ${overall}/100 | Streak: ${streak} days
+Overall score: ${overall}/100 | Streak: ${streak} days
 
-Patterns:
-${patternLines||"More data needed for patterns."}
+CROSS-PILLAR HISTORY (last 6 weeks of self-ratings, 0=struggling, 3=thriving):
+${impactHistoryLines||"Not enough history yet — this is early days."}
 
-Write these 5 sections:
-**This Week** - 2-3 sentences, reference habit days (e.g. "6/7 days on Move")
-**Your Biggest Win** - their best habit this week, be specific
-**The Connection You May Not Have Noticed** - one insight, active pillars only
-**Next Week — 3 Specific Actions** - for active pillars only, numbered
-**One Thought** - one powerful closing line
+CROSS-PILLAR PATTERNS DETECTED:
+${patternLines||"Keep building — patterns emerge with more data."}
 
-Rules: warm, honest. Never mention inactive pillars. Never penalise missing tracking data.`
+RULES:
+- Only comment on active pillars listed above
+- Use the 3-layer score breakdown to give specific insight (e.g. "your consistency is high but impact rating is low — the habit is happening but not yet creating the feeling you want")
+- Use the cross-pillar history to detect TRENDS across weeks — if a pillar keeps dropping, name it. If it's rising, celebrate it specifically.
+- If two pillars move together across weeks (both up or both down), point that connection out — that is their personal cross-pillar pattern
+- Never penalise missing tracking data
+- Sound like a coach who has been watching for weeks, not just this week
+
+Write exactly these 5 sections:
+**This Week** — 2-3 sentences. Reference specific scores and what drives them (consistency, rung, feeling).
+**Your Biggest Win** — the strongest pillar. Name the specific habit. Reference the score breakdown.
+**The Connection You May Not Have Noticed** — use the history to find a real cross-pillar pattern specific to this person. Not generic — use their actual numbers.
+**Next Week — 3 Specific Actions** — based on lowest-scoring layer (e.g. if consistency is low, focus on showing up; if impact is low, focus on noticing the feeling)
+**One Thought** — one powerful closing line.
+
+Tone: warm, honest, specific. Like a coach who knows their data for weeks.`
 
   try {
     const report = await callGroq(prompt, undefined, 600);

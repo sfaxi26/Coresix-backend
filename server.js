@@ -267,6 +267,73 @@ app.post("/api/insight", async (req, res) => {
   }
 });
 
+// ── CROSS-PILLAR TREND ANALYSIS ─────────────────────────────
+app.post("/api/trends", async (req, res) => {
+  const { deviceId, impactHistory, ladder, scores } = req.body;
+  if (!deviceId) return res.status(400).json({ error: "deviceId required" });
+
+  try {
+    // Analyze trends from app data (localStorage history)
+    const trendData = analytics.analyzeCrossPillarTrends(impactHistory || []);
+
+    // Build AI prompt for cross-pillar narrative
+    const { callGroq } = require("./ai");
+    const PILLAR_NAMES = {fuel:"Fuel",move:"Move",rest:"Rest",calm:"Calm",connect:"Connect",focus:"Focus"};
+    const PILLAR_EMOJIS = {fuel:"⚡",move:"💪",rest:"😴",calm:"🧘",connect:"🤝",focus:"🎯"};
+
+    // Format trends
+    const trendLines = Object.entries(trendData.trends)
+      .map(([p,t])=>`${PILLAR_EMOJIS[p]} ${PILLAR_NAMES[p]}: ${t.direction} (recent avg: ${t.recentAvg}/3, all ratings: ${t.allRatings.join(" → ")})`)
+      .join("\n");
+
+    // Format correlations
+    const corrLines = trendData.correlations
+      .map(c=>`${PILLAR_EMOJIS[c.p1]} ${PILLAR_NAMES[c.p1]} + ${PILLAR_EMOJIS[c.p2]} ${PILLAR_NAMES[c.p2]}: move together ${c.strength}% of the time`)
+      .join("\n");
+
+    if (!trendLines) {
+      return res.json({
+        trends: {},
+        correlations: [],
+        narrative: "Keep building your habits — cross-pillar patterns emerge after 3-4 weeks of weekly check-ins.",
+        hasData: false,
+      });
+    }
+
+    const prompt = `Analyse these cross-pillar wellness trends for a CoreSix user and write ONE paragraph of insight.
+
+PILLAR TRENDS (self-rated weekly, 0=struggling, 3=thriving):
+${trendLines||"No trend data yet"}
+
+CORRELATED PILLARS (move up and down together):
+${corrLines||"Not enough data for correlations yet"}
+
+RUNG PROGRESS:
+${Object.entries(ladder||{}).map(([p,l])=>`${PILLAR_NAMES[p]||p}: Rung ${(l.rung||0)+1}/5, ${(l.habits||[]).filter(h=>h.mastered).length}/3 habits mastered`).join(", ")}
+
+Write ONE paragraph (3-4 sentences) that:
+1. Names the most important trend you see (rising or dropping pillar)
+2. Points out the most significant cross-pillar connection IF the data shows one
+3. Connects this to what the person should focus on
+4. Sounds like a coach who has been watching their data for weeks
+
+Be specific — use actual pillar names and directions. No generic advice.
+If not enough data: write one honest sentence saying what patterns will emerge with more check-ins.`;
+
+    const narrative = await callGroq(prompt, undefined, 200);
+
+    res.json({
+      trends: trendData.trends,
+      correlations: trendData.correlations,
+      narrative,
+      hasData: Object.keys(trendData.trends).length > 0,
+    });
+  } catch (err) {
+    console.error("Trends error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Get patterns for user
 app.get("/api/patterns/:deviceId", async (req, res) => {
   const { deviceId } = req.params;

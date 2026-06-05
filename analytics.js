@@ -753,6 +753,58 @@ const generatePredictiveWarnings = async (userId) => {
   return warnings.sort((a,b)=>b.urgency-a.urgency).slice(0,4);
 };
 
+// ── CROSS-PILLAR TREND ANALYSIS ──────────────────────────────
+const analyzeCrossPillarTrends = (impactHistory) => {
+  if (!impactHistory || impactHistory.length < 2) return { trends:{}, correlations:[] };
+
+  const PILLARS = ["fuel","move","rest","calm","connect","focus"];
+  const trends = {};
+
+  PILLARS.forEach(pid => {
+    const ratings = impactHistory
+      .filter(h => h.answers?.[pid] !== undefined)
+      .map(h => ({ week: h.week, score: h.answers[pid], date: h.date }));
+
+    if (ratings.length < 2) return;
+
+    const recent = ratings.slice(-2);
+    const older = ratings.slice(-4, -2);
+    const recentAvg = recent.reduce((a,b)=>a+b.score,0) / recent.length;
+    const olderAvg = older.length > 0 ? older.reduce((a,b)=>a+b.score,0) / older.length : recentAvg;
+    const change = recentAvg - olderAvg;
+
+    trends[pid] = {
+      direction: change > 0.4 ? "rising ↑" : change < -0.4 ? "dropping ↓" : "stable →",
+      change: Math.round(change * 10) / 10,
+      recentAvg: Math.round(recentAvg * 10) / 10,
+      allRatings: ratings.map(r => r.score),
+    };
+  });
+
+  // Find correlated pillars — ones that move together
+  const correlations = [];
+  PILLARS.forEach((p1, i) => {
+    PILLARS.slice(i+1).forEach(p2 => {
+      const weeks = impactHistory.filter(h => h.answers?.[p1] !== undefined && h.answers?.[p2] !== undefined);
+      if (weeks.length < 3) return;
+
+      // Check same-direction movement
+      let sameDir = 0;
+      for (let i = 1; i < weeks.length; i++) {
+        const d1 = weeks[i].answers[p1] - weeks[i-1].answers[p1];
+        const d2 = weeks[i].answers[p2] - weeks[i-1].answers[p2];
+        if ((d1 > 0 && d2 > 0) || (d1 < 0 && d2 < 0) || (d1 === 0 && d2 === 0)) sameDir++;
+      }
+      const correlation = sameDir / (weeks.length - 1);
+      if (correlation >= 0.65) {
+        correlations.push({ p1, p2, strength: Math.round(correlation * 100) });
+      }
+    });
+  });
+
+  return { trends, correlations };
+};
+
 module.exports = {
   getConsistencyScores,
   getStreakAnalysis,
@@ -762,4 +814,5 @@ module.exports = {
   detectCrossPillarPatterns,
   getPillarRippleEffect,
   generatePredictiveWarnings,
+  analyzeCrossPillarTrends,
 };
