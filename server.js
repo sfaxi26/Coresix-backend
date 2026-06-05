@@ -365,38 +365,76 @@ app.post("/api/next-week-plan", async (req, res) => {
       ORDER BY day_of_week
     `, [deviceId]);
 
-    // Find weakest days per pillar
     const dayNames = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
-    const pillarWeakDays = {};
+
+    // Use app history as primary source (always accurate, even in test mode)
+    const appHistory = weekData.history || [];
+    const appScores = weekData.scores || {};
+    const appLadder = weekData.ladder || {};
+    const selectedPillars = weekData.selectedPillars || [];
+
+    // Determine weak/strong pillars from app data
+    let weakPillars = [];
+    let strongPillars = [];
+
+    if (Object.keys(appScores).length > 0) {
+      const sorted = Object.entries(appScores).sort((a,b)=>a[1]-b[1]);
+      weakPillars = sorted.slice(0,3).map(([p])=>p);
+      strongPillars = sorted.slice(-2).map(([p])=>p);
+    } else if (impactRows?.length > 0) {
+      weakPillars = impactRows.slice(0,3).map(r=>r.pillar);
+      strongPillars = impactRows.slice(-2).map(r=>r.pillar);
+    }
+
+    // Find hard days from app history
     const dayCheckins = {};
-    checkinRows.forEach(r => {
-      const day = parseInt(r.day_of_week);
+    appHistory.forEach(h => {
+      const day = new Date(h.date).getDay();
       if (!dayCheckins[day]) dayCheckins[day] = 0;
-      dayCheckins[day] += parseInt(r.checkins);
+      dayCheckins[day] += (h.pillars||[]).length;
     });
 
-    // Find 2 lowest check-in days
+    // Fall back to DB if no app history
+    if (Object.keys(dayCheckins).length === 0) {
+      checkinRows.forEach(r => {
+        const day = parseInt(r.day_of_week);
+        if (!dayCheckins[day]) dayCheckins[day] = 0;
+        dayCheckins[day] += parseInt(r.checkins);
+      });
+    }
+
     const sortedDays = Object.entries(dayCheckins)
       .sort((a,b)=>a[1]-b[1])
       .slice(0,2)
       .map(([day])=>dayNames[parseInt(day)]);
 
-    // Get cross-pillar patterns
-    const crossPatterns = await analytics.detectCrossPillarPatterns(deviceId);
-    const warnings = await analytics.generatePredictiveWarnings(deviceId);
+    // Rung context for each active pillar
+    const rungNames = ["Foundation","Awareness","Quality","Planning","Mastery"];
+    const rungContext = selectedPillars.map(pid => {
+      const ladder = appLadder[pid] || {};
+      const rung = ladder.rung || 0;
+      const habits = ladder.habits || [];
+      const mastered = habits.filter(h=>h.mastered).length;
+      return `${pid}: Rung ${rung+1} (${rungNames[rung]}) — ${mastered}/3 habits mastered`;
+    }).join(", ");
 
-    // Get pillar scores from weekly impact
-    const { rows: impactRows } = await pool.query(`
+    // Get cross-pillar patterns and warnings (use DB data)
+    let crossPatterns = [];
+    let warnings = [];
+    try {
+      crossPatterns = await analytics.detectCrossPillarPatterns(deviceId);
+      warnings = await analytics.generatePredictiveWarnings(deviceId);
+    } catch(e) {}
+
+    // Get impact scores from DB if not in app data
+    const { rows: impactRowsDB } = await pool.query(`
       SELECT pillar, AVG(score) as avg
       FROM weekly_impact
       WHERE user_id = $1
       AND created_at > NOW() - INTERVAL '14 days'
-      GROUP BY pillar
-      ORDER BY avg ASC
+      GROUP BY pillar ORDER BY avg ASC
     `, [deviceId]);
-
-    const weakPillars = impactRows.slice(0,3).map(r=>r.pillar);
-    const strongPillars = impactRows.slice(-2).map(r=>r.pillar);
+    const impactRows = impactRowsDB;
 
     const PILLAR_NAMES = {fuel:"Fuel",move:"Move",rest:"Rest",calm:"Calm",connect:"Connect",focus:"Focus"};
     const PILLAR_EMOJIS = {fuel:"⚡",move:"💪",rest:"😴",calm:"🧘",connect:"🤝",focus:"🎯"};
@@ -407,16 +445,24 @@ app.post("/api/next-week-plan", async (req, res) => {
 
     const { callGroq } = require("./ai");
 
-    const prompt = `Create a Smart Next Week Plan for ${user.name||"this person"} based on their CoreSix data.
+    const prompt = `Create a Smart Next Week Plan for ${user.name||"this person"} based on their CoreSix wellness data.
 
 Week of: ${weekOf}
-Current streak: ${user.streak || 0} days
-Weakest pillars this week: ${weakPillars.map(p=>`${PILLAR_EMOJIS[p]} ${PILLAR_NAMES[p]}`).join(", ")||"unknown"}
-Strongest pillars: ${strongPillars.map(p=>`${PILLAR_EMOJIS[p]} ${PILLAR_NAMES[p]}`).join(", ")||"unknown"}
-Historically hard days: ${sortedDays.join(" and ")||"unknown"}
-Active cross-pillar patterns: ${crossPatterns.slice(0,2).map(p=>p.message).join("; ")||"none detected"}
-Current warnings: ${warnings.slice(0,2).map(w=>w.title).join("; ")||"none"}
-This week's data: ${JSON.stringify(weekData||{})}
+Streak: ${user.streak||weekData.streak||0} days
+Active pillars: ${selectedPillars.map(p=>`${PILLAR_EMOJIS[p]} ${PILLAR_NAMES[p]}`).join(", ")||"building habits"}
+Rung progress: ${rungContext||"just starting"}
+Weakest pillars: ${weakPillars.map(p=>`${PILLAR_EMOJIS[p]||""} ${PILLAR_NAMES[p]||p}`).join(", ")||"need more data"}
+Strongest pillars: ${strongPillars.map(p=>`${PILLAR_EMOJIS[p]||""} ${PILLAR_NAMES[p]||p}`).join(", ")||"building"}
+Hard days historically: ${sortedDays.join(" and ")||"not enough data yet"}
+Cross-pillar patterns: ${crossPatterns.slice(0,2).map(p=>p.message).join("; ")||"none yet — keep building"}
+Warnings: ${warnings.slice(0,2).map(w=>w.title).join("; ")||"none"}
+
+RULES:
+- Only suggest actions for their ACTIVE pillars: ${selectedPillars.join(", ")||"their chosen pillars"}
+- Reference their specific rung — Rung 1 = tiny habits, Rung 5 = mastery level actions
+- Base suggestions on their actual history and patterns above
+- Never suggest actions for pillars they are not working on
+- Make actions specific and achievable this week
 
 Generate exactly 3 specific action items for next week. Each action must:
 1. Reference a specific day or time window
