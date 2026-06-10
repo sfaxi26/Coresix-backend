@@ -361,7 +361,9 @@ Write exactly these 5 sections:
 **Next Week — 3 Specific Actions** — based on lowest-scoring layer (e.g. if consistency is low, focus on showing up; if impact is low, focus on noticing the feeling)
 **One Thought** — one powerful closing line.
 
-Tone: warm, honest, specific. Like a coach who knows their data for weeks.`
+Tone: warm, honest, encouraging, specific. Like a coach who knows their data for weeks and believes in them unconditionally.
+If scores are low: find the real wins. "3 check-ins is a foundation being laid. That is real."
+Never shame. Never penalise. Always believe in them.`
 
   try {
     const report = await callGroq(prompt, undefined, 600);
