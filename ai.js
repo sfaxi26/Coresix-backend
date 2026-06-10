@@ -161,7 +161,29 @@ IF PERFORMANCE IS HIGH:
 
 ALWAYS: Only mention active pillars. Habit check-ins = success. 2-3 sentences max.`,
 
-        relapse_return: `
+        micro_challenge: `
+Generate a micro-challenge for today's habit check-in.
+
+Person: ${context.user?.name || "this person"}
+Habit: "${context.habit}"
+${context.habit_reason ? `Why they chose it: "${context.habit_reason}"` : ""}
+Day: ${context.checkin_day} of 5
+Rung: ${context.rung_name || "Foundation"}
+Pillar: ${context.pillar_name}
+Previous check-ins this habit: ${context.checkin_day - 1}
+${context.last_impact !== undefined ? `Last week's feeling: ${["Struggling","Getting by","Improving","Thriving"][context.last_impact]}` : ""}
+
+Write ONE micro-challenge for today. Rules:
+- Day 1: Make it easy and welcoming. Just do the habit. "Today is just about showing up."
+- Day 2: Add one tiny variation or awareness. Slightly deeper than Day 1.
+- Day 3: Add reflection. "Notice..." or "Pay attention to..." — halfway point.
+- Day 4: Gently push further. One small step beyond the baseline.
+- Day 5: Connect to identity. "You've done this 5 times. It is becoming part of who you are."
+${context.habit_reason ? `- Reference their reason naturally if it fits: "${context.habit_reason}"` : ""}
+- Max 2 sentences. Warm, specific, encouraging.
+- Never mention the day number explicitly — let the progression feel natural.`,
+
+    relapse_return: `
 ${user.name} is returning to CoreSix after a break.
 
 TONE: This is the most important coaching moment. They came back. That is everything.

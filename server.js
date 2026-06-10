@@ -334,6 +334,34 @@ If not enough data: write one honest sentence saying what patterns will emerge w
   }
 });
 
+// ── MICRO CHALLENGE ENDPOINT ────────────────────────────────
+app.post("/api/micro-challenge", async (req, res) => {
+  const { deviceId, pid, habit, habitReason, checkinDay, rungName, pillarName, lastImpact } = req.body;
+  if (!deviceId || !habit) return res.status(400).json({ error: "deviceId and habit required" });
+
+  try {
+    const { rows } = await pool.query("SELECT name FROM users WHERE id=$1", [deviceId]);
+    const userName = rows[0]?.name || "there";
+
+    const context = {
+      user: { name: userName },
+      habit: habit.replace(/\s*\[reason:.*?\]$/i, '').trim(),
+      habit_reason: habitReason || null,
+      checkin_day: checkinDay || 1,
+      rung_name: rungName || "Foundation",
+      pillar_name: pillarName || pid,
+      last_impact: lastImpact,
+    };
+
+    const { generateInsight } = require("./ai");
+    const challenge = await generateInsight(context, "micro_challenge");
+    res.json({ challenge });
+  } catch (err) {
+    console.error("Micro challenge error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Get patterns for user
 app.get("/api/patterns/:deviceId", async (req, res) => {
   const { deviceId } = req.params;

@@ -67,8 +67,8 @@ const detectPatterns = async (userId) => {
   if (parseInt(recentCheckins[0].count) === 0) {
     patterns.push({
       type: "relapse_risk",
-      severity: "high",
-      message: "No check-ins in 3 days",
+      severity: "encouragement",
+      message: "Every day is a fresh start",
       action: "gentle_return",
     });
   }
@@ -111,7 +111,7 @@ const detectPatterns = async (userId) => {
   if (weekdayAvg > 0 && weekendAvg < weekdayAvg * 0.5) {
     patterns.push({
       type: "weekend_drop",
-      severity: "medium",
+      severity: "encouragement",
       weekday_avg: weekdayAvg,
       weekend_avg: weekendAvg,
       message: "Habits drop significantly on weekends",
@@ -139,7 +139,7 @@ const detectPatterns = async (userId) => {
     if (count < avgCheckins * 0.4) {
       patterns.push({
         type: "pillar_neglect",
-        severity: "medium",
+        severity: "encouragement",
         pillar,
         message: `${pillar} pillar significantly underperforming`,
         action: "focus_nudge",
@@ -165,8 +165,8 @@ const detectPatterns = async (userId) => {
     if (lastWeek >= 15 && thisWeek <= 3) {
       patterns.push({
         type: "all_or_nothing",
-        severity: "medium",
-        message: "Big drop after a strong week — perfectionism pattern",
+        severity: "encouragement",
+        message: "Strong weeks build strong habits",
         action: "better_not_perfect_coaching",
       });
     }
@@ -360,9 +360,9 @@ const detectCrossPillarPatterns = async (userId) => {
     if (restScore <= 1 && focusScore <= 1) {
       patterns.push({
         type: "rest_focus_link",
-        severity: "high",
+        severity: "encouragement",
         pillars: ["rest", "focus"],
-        title: "Sleep is hurting your focus",
+        title: "Rest and Focus are connected for you",
         message: "Your Rest and Focus scores are both low this week. Poor sleep directly impairs the prefrontal cortex — the seat of concentration and deep work.",
         suggestion: "Prioritise sleep tonight. Even one extra hour can recover 80% of your cognitive capacity.",
         icon: "😴→🎯",
@@ -389,7 +389,7 @@ const detectCrossPillarPatterns = async (userId) => {
     if (moveScore <= 1 && calmScore <= 1) {
       patterns.push({
         type: "move_calm_link",
-        severity: "medium",
+        severity: "encouragement",
         pillars: ["move", "calm"],
         title: "Movement could reduce your stress",
         message: "Low movement and high stress this week. Exercise releases endorphins and reduces cortisol — it is one of the most powerful stress interventions available.",
@@ -406,9 +406,9 @@ const detectCrossPillarPatterns = async (userId) => {
     if (connectScore <= 1 && calmScore <= 1) {
       patterns.push({
         type: "isolation_stress",
-        severity: "medium",
+        severity: "encouragement",
         pillars: ["connect", "calm"],
-        title: "Isolation may be increasing stress",
+        title: "Connection could lift your Calm this week",
         message: "Low connection and elevated stress often go together. Social isolation activates the same brain regions as physical pain.",
         suggestion: "One genuine conversation today could measurably reduce your cortisol levels.",
         icon: "🤝→🧘",
@@ -423,9 +423,9 @@ const detectCrossPillarPatterns = async (userId) => {
     if (fuelScore <= 1 && focusScore <= 1) {
       patterns.push({
         type: "fuel_focus_link",
-        severity: "medium",
+        severity: "encouragement",
         pillars: ["fuel", "focus"],
-        title: "Nutrition may be limiting your focus",
+        title: "Fuel and Focus move together for you",
         message: "Your Fuel and Focus scores are both low. The brain consumes 20% of your daily energy — poor nutrition directly limits cognitive performance.",
         suggestion: "Try adding protein to breakfast tomorrow and notice the difference in morning clarity.",
         icon: "⚡→🎯",
@@ -439,9 +439,9 @@ const detectCrossPillarPatterns = async (userId) => {
     if (restScore <= 1 && calmScore <= 1) {
       patterns.push({
         type: "rest_calm_link",
-        severity: "high",
+        severity: "encouragement",
         pillars: ["rest", "calm"],
-        title: "Poor sleep is amplifying stress",
+        title: "Better sleep could transform your week",
         message: "Sleep deprivation enlarges the amygdala — your brain's threat detector — making you more reactive and less calm.",
         suggestion: "A consistent bedtime for 3 nights can begin resetting your stress response.",
         icon: "😴→🧘",
@@ -579,12 +579,12 @@ const generatePredictiveWarnings = async (userId) => {
   if (todayCheckins < avgCheckins * 0.5) {
     warnings.push({
       type: "streak_risk_today",
-      severity: "high",
+      severity: "encouragement",
       timing: "today",
       title: `${dayName}s are your risk day`,
       message: `Your data shows ${dayName}s are your lowest check-in day. Your streak is at risk today.`,
       suggestion: "Do your habits earlier today than usual — don't leave them for the evening.",
-      icon: "⚠️",
+      icon: "💪",
       actionable: true,
       urgency: 9,
     });
@@ -592,7 +592,7 @@ const generatePredictiveWarnings = async (userId) => {
     const tomorrow = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][(dayOfWeek+1)%7];
     warnings.push({
       type: "streak_risk_tomorrow",
-      severity: "medium",
+      severity: "encouragement",
       timing: "tomorrow",
       title: `${tomorrow} is historically your hard day`,
       message: `Based on your data, ${tomorrow}s are when you most often miss habits. Tomorrow could be tough.`,
@@ -613,19 +613,22 @@ const generatePredictiveWarnings = async (userId) => {
     ORDER BY date DESC
   `, [userId]);
 
-  const last3Days = recentCheckins.slice(0,3);
-  const declining = last3Days.length >= 2 &&
-    last3Days[0].pillars < last3Days[last3Days.length-1].pillars;
+  const last4Days = recentCheckins.slice(0,4);
+  // Requires 4+ days, consistently declining over 3 consecutive days
+  const declining = last4Days.length >= 4 &&
+    last4Days[0].pillars < last4Days[1].pillars &&
+    last4Days[1].pillars < last4Days[2].pillars &&
+    last4Days[0].pillars <= 1; // Only warn if today is very low (0-1 habits)
 
   if (declining) {
     warnings.push({
       type: "declining_streak",
-      severity: "high",
+      severity: "encouragement",
       timing: "today",
-      title: "Habit momentum is dropping",
-      message: "You've completed fewer habits each day this week. This pattern usually leads to a streak break within 1-2 days.",
-      suggestion: "Today — do just ONE habit. Momentum matters more than perfection right now.",
-      icon: "📉",
+      title: "One habit today keeps everything alive",
+      message: "Every streak has quiet days. The people who keep going through them are the ones who actually change. You're still here — that's what matters.",
+      suggestion: "Do the smallest version of one habit today. That's it. That's enough.",
+      icon: "🌱",
       actionable: true,
       urgency: 8,
     });
@@ -655,10 +658,10 @@ const generatePredictiveWarnings = async (userId) => {
     if (weekendAvg < weekdayAvg * 0.6) {
       warnings.push({
         type: "weekend_preparation",
-        severity: "medium",
+        severity: "encouragement",
         timing: "this weekend",
-        title: "Weekend is your challenge window",
-        message: "Your weekday habits are strong but weekends show a significant drop. The next 48 hours are critical for your streak.",
+        title: "Weekends are where habits become identity",
+        message: "Your weekday consistency is impressive. The next 48 hours are critical for your streak.",
         suggestion: "Set a specific time for tomorrow's habits right now — morning works best. Decide before the weekend starts.",
         icon: "📅",
         actionable: true,
@@ -687,7 +690,7 @@ const generatePredictiveWarnings = async (userId) => {
   if (avgGap >= 3 && avgGap <= 7) {
     warnings.push({
       type: "relapse_cycle",
-      severity: "medium",
+      severity: "encouragement",
       timing: "awareness",
       title: `You tend to take ${Math.round(avgGap)}-day breaks`,
       message: `Your data shows a pattern: you build momentum then take a ${Math.round(avgGap)}-day break. You may be approaching one now.`,
@@ -712,10 +715,10 @@ const generatePredictiveWarnings = async (userId) => {
     if (todayCount === 0) {
       warnings.push({
         type: "evening_reminder",
-        severity: "high",
+        severity: "encouragement",
         timing: "tonight",
-        title: "No habits logged today",
-        message: "It's evening and today's habits haven't been logged yet. Your streak is at risk tonight.",
+        title: "Today is still yours",
+        message: "There's still time today. One habit logged tonight keeps everything going tonight.",
         suggestion: "Even one habit logged tonight keeps the streak alive. Which one is easiest right now?",
         icon: "🌙",
         actionable: true,
